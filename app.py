@@ -2,33 +2,48 @@ import streamlit as st
 import pandas as pd
 
 st.set_page_config(page_title="Mobile Apps Dataset", layout="wide")
-st.title("Mobile Apps Dataset – Preview")
+st.title("Mobile Apps Dataset – Duplicate Check")
 
-FILE_NAME = "GoogleAppData.xlsx"   # make sure this file is in the repo root
+FILE_NAME = "GoogleAppData.xlsx"
 
 @st.cache_data
 def load_excel(path: str):
     xls = pd.ExcelFile(path)
-    data = pd.read_excel(xls, xls.sheet_names[0])                 # sheet 1 = data
-    dictionary = pd.read_excel(xls, xls.sheet_names[1]) if len(xls.sheet_names) > 1 else None  # sheet 2 = column defs
+    data = pd.read_excel(xls, xls.sheet_names[0])
+    dictionary = pd.read_excel(xls, xls.sheet_names[1]) if len(xls.sheet_names) > 1 else None
     return data, dictionary, xls.sheet_names
 
 try:
     df, dict_df, sheets = load_excel(FILE_NAME)
 
-    st.caption(f"Found file **{FILE_NAME}** | Sheets: {', '.join(sheets)}")
-    c1, c2, c3 = st.columns(3)
-    with c1: st.metric("Rows", len(df))
-    with c2: st.metric("Columns", len(df.columns))
-    with c3: st.write("First columns:", list(df.columns[:6]))
+    st.caption(f"Loaded **{FILE_NAME}** | Sheets: {', '.join(sheets)}")
 
-    tab_data, tab_dict = st.tabs(["📊 Data (Sheet 1)", "📖 Dictionary (Sheet 2)"])
+    tab_data, tab_duplicates, tab_dict = st.tabs(
+        ["📊 Data (Sheet 1)", "🔁 Duplicate Records", "📖 Dictionary (Sheet 2)"]
+    )
 
+    # ---- Data preview ----
     with tab_data:
-        st.subheader("Preview (first 50 rows)")
+        st.subheader("First 50 rows of dataset")
         st.dataframe(df.head(50), use_container_width=True)
 
+    # ---- Duplicate detection ----
+    with tab_duplicates:
+        st.subheader("Detect duplicate rows (all columns identical)")
+        duplicated_mask = df.duplicated(keep=False)           # marks every duplicate group
+        duplicates = df[duplicated_mask]
 
+        st.write(f"**Total duplicate rows:** {len(duplicates)} "
+                 f"out of {len(df)} total rows "
+                 f"({len(duplicates)/len(df)*100:.2f}% duplicates).")
+
+        if not duplicates.empty:
+            st.dataframe(duplicates.head(50), use_container_width=True)
+            st.caption("Showing up to 50 duplicate rows.")
+        else:
+            st.success("✅ No duplicate records found — all rows are unique.")
+
+    # ---- Dictionary tab ----
     with tab_dict:
         if dict_df is not None:
             st.subheader("Column definitions")
