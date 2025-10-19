@@ -1,33 +1,54 @@
 import streamlit as st
 import pandas as pd
-import numpy as np
 
-# כותרת
-st.title("ברוכה הבאה לאפליקציית Streamlit הראשונה שלך 🎉")
+st.set_page_config(page_title="Google App Data – Step 1", layout="wide")
+st.title("Google App Data – טעינה ותצוגה ראשונית")
 
-# טקסט הסבר
-st.write("זהו מבחן שהכול עובד! בהמשך נוסיף ניתוח נתונים אמיתי מתוך קובץ ה-Excel שלך.")
+FILE_NAME = "GoogleAppData.xlsx"
 
-# יצירת טבלה קטנה לדוגמה
-data = {
-    "קטגוריה": ["Social", "Game", "Education", "Health", "Finance"],
-    "הורדות (במיליונים)": [120, 250, 90, 60, 80],
-    "דירוג ממוצע": [4.3, 4.1, 4.5, 4.4, 4.2]
-}
-df = pd.DataFrame(data)
+@st.cache_data
+def load_excel(file_name: str):
+    # קורא את כל שמות הגיליונות
+    xls = pd.ExcelFile(file_name)
+    sheet_names = xls.sheet_names
 
-# הצגת טבלה
-st.subheader("דוגמת נתונים")
-st.dataframe(df)
+    # לפי ההנחיות: הטאב הראשון = הדאטה, השני = מילון עמודות
+    df_data = pd.read_excel(xls, sheet_name=sheet_names[0])
+    df_dict = pd.read_excel(xls, sheet_name=sheet_names[1]) if len(sheet_names) > 1 else None
+    return df_data, df_dict, sheet_names
 
-# גרף פשוט
-st.subheader("גרף הורדות לפי קטגוריה")
-st.bar_chart(df.set_index("קטגוריה")["הורדות (במיליונים)"])
+try:
+    df, dict_df, sheets = load_excel(FILE_NAME)
 
-# אינטראקטיביות
-st.subheader("בדקי את הפילטר:")
-selected_category = st.selectbox("בחרי קטגוריה", df["קטגוריה"])
-filtered = df[df["קטגוריה"] == selected_category]
-st.write("תוצאות עבור:", selected_category)
-st.dataframe(filtered)
+    st.success(f"נמצא הקובץ {FILE_NAME}. גיליונות: {', '.join(sheets)}")
 
+    # תצוגה מהירה
+    c1, c2, c3 = st.columns(3)
+    with c1: st.metric("שורות", len(df))
+    with c2: st.metric("עמודות", len(df.columns))
+    with c3: st.write("עמודות ראשונות:", list(df.columns[:6]))
+
+    # טאבים: נתונים / מילון
+    tab1, tab2 = st.tabs(["📊 Data (Sheet1)", "📖 Dictionary (Sheet2)"])
+    with tab1:
+        st.subheader("הצצה ל־50 השורות הראשונות")
+        st.dataframe(df.head(50), use_container_width=True)
+
+        st.subheader("אחוז חוסרים לכל עמודה")
+        na = (df.isna().mean()*100).round(2).sort_values(ascending=False)
+        st.dataframe(na.to_frame("NA %"))
+
+        st.subheader("Summary סטטיסטי (לעמודות מספריות)")
+        st.dataframe(df.describe(include='number').T)
+
+    with tab2:
+        if dict_df is not None:
+            st.write("מילון העמודות כפי שמופיע בטאב השני:")
+            st.dataframe(dict_df, use_container_width=True)
+        else:
+            st.info("לא נמצא טאב שני עם מילון עמודות.")
+
+except FileNotFoundError:
+    st.error(f"לא נמצא הקובץ `{FILE_NAME}` ברפוזיטורי. העלי אותו ל-GitHub (Add file → Upload files) ושמרי.")
+except Exception as e:
+    st.error(f"ארעה שגיאה בקריאת הקובץ: {e}")
