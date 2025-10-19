@@ -28,12 +28,6 @@ try:
         st.subheader("Preview (first 50 rows)")
         st.dataframe(df.head(50), use_container_width=True)
 
-        st.subheader("Missing values (%) by column")
-        na_pct = (df.isna().mean().mul(100)).round(2).sort_values(ascending=False)
-        st.dataframe(na_pct.to_frame("NA %"))
-
-        st.subheader("Numeric summary")
-        st.dataframe(df.describe(include="number").T)
 
     with tab_dict:
         if dict_df is not None:
