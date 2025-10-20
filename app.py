@@ -338,7 +338,83 @@ try:
                         f"- Dropped rows with missing **Category** or **Installs** (after cleaning): {dropped_missing}  \n"
                         f"- Rows used in this analysis: {kept_rows}"
                     )
-                    
+                # --- Analysis 2: Ratings, Reviews, and their distribution ---
+                st.markdown("### Ratings × Reviews — Distribution")
+                
+                st.write(
+                    "- **Rule**: When `Reviews > 0`, `Rating` should not be `NaN`. When `Reviews = 0`, there is effectively **no rating**.  \n"
+                    "- Therefore, for this analysis we **ignore** rows where either `Rating` or `Reviews` is `NaN`."
+                )
+                
+                # Locate needed columns
+                rating_col = find_col(df.columns, "rating", "ratings")
+                reviews_col = find_col(df.columns, "reviews", "review_count", "num_reviews")
+                
+                if not rating_col or not reviews_col:
+                    st.error("Could not find 'Rating' or 'Reviews' columns.")
+                else:
+                    # 1) Deduplicate identical rows
+                    dedup2 = df.drop_duplicates(keep="first").copy()
+                
+                    # 2) Parse to numeric
+                    dedup2["_rating_num"] = pd.to_numeric(dedup2[rating_col], errors="coerce")
+                    dedup2["_reviews_num"] = dedup2[reviews_col].apply(to_int_like)
+                
+                    # 3) Keep only rows with both numbers present (ignore NaNs as requested)
+                    analysis_df = dedup2.dropna(subset=["_rating_num", "_reviews_num"]).copy()
+                    # Reviews must be >= 0; rows with 0 reviews contribute 0 anyway but keep them is harmless
+                    analysis_df = analysis_df[analysis_df["_reviews_num"] >= 0]
+                
+                    # 4) Group by rating (rounded to 1 decimal) and sum the reviews
+                    analysis_df["_rating_1dp"] = analysis_df["_rating_num"].round(1)
+                    analysis_df["._dummy"] = 1
+                
+                    reviews_by_rating = (
+                        analysis_df
+                        .groupby("_rating_1dp", as_index=False)
+                        .agg(
+                            total_reviews=("_reviews_num", "sum"),
+                            apps=("._dummy", "size"),
+                            avg_reviews_per_app=("_reviews_num", "mean"),
+                        )
+                        .sort_values("_rating_1dp")
+                        .reset_index(drop=True)
+                    )
+                
+                    # Controls
+                    c1, c2 = st.columns(2)
+                    with c1:
+                        show_table_rr = st.checkbox("Show table (reviews by rating)", value=False)
+                    with c2:
+                        min_reviews = st.number_input("Minimum total reviews to display (filter)", min_value=0, value=0, step=100)
+                
+                    filtered_rr = reviews_by_rating[reviews_by_rating["total_reviews"] >= min_reviews]
+                
+                    # Chart: total number of reviews per rating
+                    if not filtered_rr.empty:
+                        st.caption("Total **number of reviews** per rating (rounded to 1 decimal)")
+                        chart_rr = filtered_rr.set_index("_rating_1dp")[["total_reviews"]]
+                        st.bar_chart(chart_rr)
+                    else:
+                        st.info("No rating buckets meet the current filter.")
+                
+                    # Optional table
+                    if show_table_rr:
+                        nice_rr = filtered_rr.copy()
+                        nice_rr.rename(columns={"_rating_1dp": "rating"}, inplace=True)
+                        nice_rr["total_reviews"] = nice_rr["total_reviews"].round(0).astype("int64").map(lambda x: f"{x:,}")
+                        nice_rr["avg_reviews_per_app"] = nice_rr["avg_reviews_per_app"].round(1)
+                        st.dataframe(nice_rr, use_container_width=True)
+                
+                    # Tiny method note
+                    with st.expander("Method notes (Ratings × Reviews)"):
+                        st.write(
+                            f"- Dropped exact duplicates first.  \n"
+                            f"- Parsed `Reviews` → numeric (e.g., '1,234+' → 1234).  \n"
+                            f"- Ignored rows where either `Rating` or `Reviews` was `NaN`.  \n"
+                            f"- Grouped by `Rating` rounded to **1 decimal** (1.0, 1.1, …) and **summed** all reviews in each bucket."
+                        )
+  
 except FileNotFoundError:
     st.error(f"File `{FILE_NAME}` not found in the repository. Upload it to the repo root and rerun.")
 except Exception as e:
