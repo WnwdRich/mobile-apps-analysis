@@ -257,7 +257,7 @@ try:
         # =========================
         with slide3:
             # --- Analysis 1: Popular Categories by Installs ---
-            st.subheader("1.Popular Categories by Installs")
+            st.subheader("1. Popular Categories by Installs")
         
             # 1) Locate needed columns
             cat_col = find_col(df.columns, "category", "categories")
@@ -340,7 +340,7 @@ try:
                         f"- Rows used in this analysis: {kept_rows}"
                     )
             # --- Analysis 2: Type (Free/Paid) → Reviews & Rating (by Category) ---
-            st.markdown("### 2.Type (Free/Paid) → Reviews & Rating (by Category)")
+            st.markdown("### 2. Type (Free/Paid) → Reviews & Rating (by Category)")
             
             type_col    = find_col(df.columns, "type")
             cat_col     = find_col(df.columns, "category", "categories")
@@ -436,7 +436,7 @@ try:
                             st.dataframe(g2, use_container_width=True)
 
             # --- Analysis 3: Relationship between App Size and Rating ---
-            st.markdown("### 3.Rating × Size")
+            st.markdown("### 3. Rating × Size")
             
             st.write(
                 "- We exclude rows where **Rating is NaN**.  \n"
@@ -521,7 +521,91 @@ try:
                                 st.dataframe(tbl, use_container_width=True)
 
             st.info("Conclusion: app size does not seem to affect rating (within <20MB, 20–50MB, 50–100MB).")
-            # --- Analysis 4:---
+            # --- Analysis 4: Content Rating ↔ Installs---
+            st.markdown("### 4. Content Rating (age target) → Installs")
+            
+            content_col = find_col(df.columns, "content rating", "content_rating", "contentrating")
+            inst_col    = find_col(df.columns, "installs", "downloads")
+            cat_col     = find_col(df.columns, "category", "categories")
+            
+            if not content_col or not inst_col:
+                st.error("Could not find 'Content Rating' or 'Installs' columns.")
+            else:
+                # 1) Deduplicate identical rows
+                base = df.drop_duplicates(keep="first").copy()
+            
+                # 2) Parse installs → numeric
+                base["_installs"] = base[inst_col].apply(to_int_like)
+            
+                # 3) Basic cleaning: drop rows missing these fields
+                base = base.dropna(subset=[content_col, "_installs"]).copy()
+            
+                # Normalize content labels lightly (trim/standardize casing)
+                base["_content"] = base[content_col].astype(str).str.strip()
+            
+                # Option to exclude 'Unrated'
+                colA, colB = st.columns(2)
+                with colA:
+                    drop_unrated = st.checkbox("Exclude 'Unrated'", value=True)
+                with colB:
+                    sel_cat = st.selectbox(
+                        "Filter by Category (optional)",
+                        ["All categories"] + sorted(base[cat_col].dropna().astype(str).unique().tolist()) if cat_col else ["All categories"]
+                    )
+            
+                if drop_unrated:
+                    base = base[~base["_content"].str.lower().eq("unrated")]
+            
+                if cat_col and sel_cat != "All categories":
+                    base = base[base[cat_col].astype(str) == sel_cat]
+            
+                if base.empty:
+                    st.info("No rows after filtering (check 'Unrated' toggle or category).")
+                else:
+                    base["._dummy"] = 1
+            
+                    # 4) Aggregate by content rating
+                    cr = (
+                        base.groupby("_content", as_index=False)
+                            .agg(
+                                total_installs=("_installs", "sum"),
+                                apps=("._dummy", "size"),
+                                avg_installs_per_app=("_installs", "mean"),
+                                median_installs=("_installs", "median"),
+                            )
+                            .sort_values("total_installs", ascending=False, ignore_index=True)
+                    )
+            
+                    # 5) Chart: total installs by content rating
+                    st.caption("Total installs by content rating (higher = more user downloads)")
+                    st.bar_chart(cr.set_index("_content")[["total_installs"]])
+            
+                    # 6) Highlights
+                    top_row = cr.iloc[0]
+                    st.markdown(
+                        f"- **Top content rating by total installs:** `{top_row['_content']}`  \n"
+                        f"- **Total installs:** {int(top_row['total_installs']):,}  \n"
+                        f"- **Apps in this segment:** {int(top_row['apps']):,}  \n"
+                        f"- **Average installs/app:** {int(top_row['avg_installs_per_app']):,}"
+                    )
+            
+                    # 7) Optional table
+                    with st.expander("Show table"):
+                        nice = cr.copy()
+                        for c in ["total_installs", "avg_installs_per_app", "median_installs"]:
+                            nice[c] = nice[c].round(0).astype("int64").map(lambda x: f"{x:,}")
+                        st.dataframe(nice.rename(columns={"_content": "Content Rating"}), use_container_width=True)
+            
+                    # 8) Method note
+                    with st.expander("Method (Content Rating → Installs)"):
+                        st.write(
+                            "- Dropped exact duplicate rows.  \n"
+                            "- Parsed **Installs** to numeric (e.g., '1,000,000+' → 1000000).  \n"
+                            "- Dropped rows missing **Content Rating** or **Installs**.  \n"
+                            "- Optional: excluded **'Unrated'** and/or filtered by **Category**.  \n"
+                            "- Aggregated installs by content rating to show where demand is highest."
+                        )
+
             # --- Analysis 5:---
 
 
