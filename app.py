@@ -6,7 +6,7 @@ import altair as alt
 
 
 st.set_page_config(page_title="Mobile Apps – Slides", layout="wide")
-st.title("Mobile Apps – Concise Slides")
+st.title("Mobile Apps Analysis")
 
 FILE_NAME = "GoogleAppData.xlsx"
 
