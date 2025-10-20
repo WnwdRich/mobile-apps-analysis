@@ -178,42 +178,83 @@ def optimal_align_row(row: pd.Series,
     improved = after < before
     return corrected, changes, improved, (before - after)
 
-def optimal_align_dataframe(df: pd.DataFrame,
-                            window: int = 2,
-                            protect_first_cols: int = 1,
-                            distance_weight: float = 1.0,
-                            invalid_penalty: float = 100.0,
-                            stay_bias: float = 0.0,
-                            min_improvement: int = 1):
+def optimal_align_row(row: pd.Series,
+                      validators: dict,
+                      window: int = 2,
+                      protect_first_cols: int = 1,
+                      distance_weight: float = 1.0,
+                      invalid_penalty: float = 100.0,
+                      stay_bias: float = 0.0):
     """
-    Apply optimal alignment row-wise; only accept a row’s reassignment if fail-score improves
-    by at least min_improvement.
+    Reassign only suspicious cells using Hungarian assignment.
+    FIXED: correct handling of indices into valid_matrix; guards for empty sets.
     """
-    validators = build_validators(df.columns)
-    corrected = df.copy()
-    all_changes = []
-    improved_rows = 0
+    cols = list(row.index)
+    n = len(cols)
+    vals = row.values.copy()
 
-    for i in range(len(df)):
-        row = df.iloc[i]
-        fixed_row, changes, improved, delta = optimal_align_row(
-            row, validators,
-            window=window,
-            protect_first_cols=protect_first_cols,
-            distance_weight=distance_weight,
-            invalid_penalty=invalid_penalty,
-            stay_bias=stay_bias
-        )
-        if improved and delta >= min_improvement:
-            corrected.iloc[i] = fixed_row
-            if changes:
-                for ch in changes:
-                    ch["row"] = df.index[i]
-                all_changes.extend(changes)
-            improved_rows += 1
+    def is_valid(col, v):
+        fn = validators.get(col)
+        return bool(fn and fn(v))
 
-    changes_df = pd.DataFrame(all_changes)
-    return corrected, changes_df, improved_rows
+    # Columns we won't touch: protected non-nulls + already-valid cells
+    fixed_mask = np.zeros(n, dtype=bool)
+    for j, c in enumerate(cols):
+        v = vals[j]
+        if j < protect_first_cols and pd.notna(v):
+            fixed_mask[j] = True
+        elif pd.notna(v) and is_valid(c, v):
+            fixed_mask[j] = True
+
+    # Suspicious cells = non-null & not fixed
+    mis_cols = [j for j in range(n) if (pd.notna(vals[j]) and not fixed_mask[j])]
+    if not mis_cols:
+        return row, [], False, 0
+
+    # Candidate targets = any non-fixed column
+    free_cols = [j for j in range(n) if not fixed_mask[j]]
+    if not free_cols:
+        return row, [], False, 0
+
+    # Build cost & validity matrices (rows=mis_cols, cols=free_cols)
+    cost = np.zeros((len(mis_cols), len(free_cols)))
+    valid_matrix = np.zeros_like(cost, dtype=bool)
+
+    for a_idx, j in enumerate(mis_cols):
+        v = vals[j]
+        for b_idx, t in enumerate(free_cols):
+            col_t = cols[t]
+            dist = abs(j - t)
+            valid_here = is_valid(col_t, v)
+            valid_matrix[a_idx, b_idx] = valid_here
+            cst = distance_weight * dist + (stay_bias if t == j else 0.0)
+            if not valid_here:
+                cst += invalid_penalty
+            cost[a_idx, b_idx] = cst
+
+    # Solve assignment
+    from scipy.optimize import linear_sum_assignment
+    row_ind, col_ind = linear_sum_assignment(cost)
+
+    corrected = row.copy()
+    changes = []
+    used_targets = set()
+
+    # ✅ Correct indexing: use the (a_idx, b_idx) pairs directly
+    for a_idx, b_idx in zip(row_ind, col_ind):
+        orig_j = mis_cols[a_idx]
+        tgt_j  = free_cols[b_idx]
+        if valid_matrix[a_idx, b_idx] and (tgt_j not in used_targets) and not fixed_mask[tgt_j]:
+            corrected.iat[tgt_j] = vals[orig_j]
+            corrected.iat[orig_j] = np.nan
+            used_targets.add(tgt_j)
+            changes.append({"from": cols[orig_j], "to": cols[tgt_j], "value": vals[orig_j]})
+
+    # Only keep if improved
+    before = row_fail_score(row, validators)
+    after  = row_fail_score(corrected, validators)
+    improved = after < before
+    return corrected, changes, improved, (before - after)
 
 # =========================
 # Main app
