@@ -38,8 +38,8 @@ try:
                  f"({len(duplicates)/len(df)*100:.2f}% duplicates).")
 
         if not duplicates.empty:
-            st.dataframe(duplicates.head(50), use_container_width=True)
-            st.caption("Showing up to 50 duplicate rows.")
+            st.dataframe(duplicates, use_container_width=True)
+            st.caption("Showing duplicate rows.")
         else:
             st.success("✅ No duplicate records found — all rows are unique.")
 
