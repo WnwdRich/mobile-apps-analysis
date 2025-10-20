@@ -97,40 +97,23 @@ try:
         else:
             st.info("No second sheet with column dictionary was found.")
 
-    # =========================
+        # =========================
     # Slide 2 – Data Quality
     # =========================
     with slide2:
-        # --- Duplicates ---
-        st.subheader("Duplicate Records (all columns identical)")
-        duplicated_mask = df.duplicated(keep=False)
-        duplicates = df[duplicated_mask]
-
-        c1, c2, c3 = st.columns(3)
-        with c1: st.metric("Total rows", len(df))
-        with c2: st.metric("Duplicate rows", len(duplicates))
-        with c3: 
-            pct = (len(duplicates)/len(df)*100) if len(df) else 0
-            st.metric("Duplicate %", f"{pct:.2f}%")
-
-        if not duplicates.empty:
-            st.dataframe(duplicates, use_container_width=True)
-        else:
-            st.success("✅ No duplicate records found.")
-
-        # --- Misalignment explanation + likely misaligned ---
-        st.markdown("---")
+        # --- Misalignment explanation ---
         st.subheader("Misaligned (left-shift) test – explanation")
         st.write(
-            "- We validate each row with simple rules (Rating 0–5, Installs/Reviews ≥ 0 after cleaning, Size parseable 0–5120MB).\n"
-            "- Then we simulate a **1-column right shift** to detect rows that were likely left-shifted during export.\n"
-            "- If shifting right reduces failures significantly, we flag the row as **Likely misaligned**."
+            "- Validate each row (Rating 0–5, Installs/Reviews ≥ 0, Size parseable 0–5120MB). "
+            "Then simulate a **1-column right shift** to detect rows likely left-shifted during export. "
+            "If shifting reduces failures meaningfully, flag as **Likely misaligned**."
         )
 
-        # Compute validation scores
+        # --- Compute validation scores + misalignment detection ---
         orig_scores = df.apply(lambda r: row_fail_score(r, df.columns), axis=1)
         shifted_df = df.apply(shift_row_right_by_1, axis=1)
         shifted_scores = shifted_df.apply(lambda r: row_fail_score(r, shifted_df.columns), axis=1)
+
         results = pd.DataFrame({
             "orig_fail_score": orig_scores,
             "shift_right_fail_score": shifted_scores,
@@ -140,22 +123,62 @@ try:
         suspicious_mask = (results["orig_fail_score"] >= 2) & (results["improvement_if_shift_right"] >= 2)
         suspicious_idx = results[suspicious_mask].index
 
-        c4, c5 = st.columns(2)
-        with c4: st.metric("Rows with ≥1 failed check", int((results["orig_fail_score"] >= 1).sum()))
-        with c5: st.metric("Likely misaligned rows", int(len(suspicious_idx)))
+        c0, c1, c2 = st.columns(3)
+        with c0: st.metric("Total rows", len(df))
+        with c1: st.metric("Rows with ≥1 failed check", int((results["orig_fail_score"] >= 1).sum()))
+        with c2: st.metric("Likely misaligned rows", int(len(suspicious_idx)))
 
         if len(suspicious_idx) > 0:
-            st.write("**Likely misaligned (left-shifted) rows:**")
+            st.write("**Likely misaligned (left-shifted) rows (original view):**")
             st.dataframe(df.loc[suspicious_idx], use_container_width=True)
         else:
             st.success("✅ No strongly suspicious misalignment patterns detected.")
 
-        # --- Missing values per column ---
         st.markdown("---")
-        st.subheader("Missing values per column")
-        missing_count = df.isna().sum()
-        missing_summary = pd.DataFrame({"Missing Values": missing_count}).sort_values("Missing Values", ascending=False)
-        st.dataframe(missing_summary, use_container_width=True)
+
+        # --- Build corrected_df by fixing only suspicious rows ---
+        st.subheader("Apply misalignment auto-fix (used for missing-values + duplicates)")
+        apply_fix = st.checkbox("Auto-fix likely misaligned rows (shift right by 1 where flagged)", value=True)
+
+        if apply_fix and len(suspicious_idx) > 0:
+            corrected_df = df.copy()
+            corrected_df.loc[suspicious_idx] = shifted_df.loc[suspicious_idx]
+            st.caption(f"Applied right-shift to {len(suspicious_idx)} rows.")
+        else:
+            corrected_df = df.copy()
+            st.caption("No auto-fix applied (using original data).")
+
+        # --- Duplicates on corrected data ---
+        st.subheader("Duplicate Records (after optional fix)")
+        duplicated_mask = corrected_df.duplicated(keep=False)
+        duplicates = corrected_df[duplicated_mask]
+
+        d1, d2 = st.columns(2)
+        with d1: st.metric("Duplicate rows", len(duplicates))
+        with d2:
+            pct = (len(duplicates)/len(corrected_df)*100) if len(corrected_df) else 0
+            st.metric("Duplicate %", f"{pct:.2f}%")
+
+        if not duplicates.empty:
+            st.dataframe(duplicates, use_container_width=True)
+        else:
+            st.success("✅ No duplicate records found.")
+
+        st.markdown("---")
+
+        # --- Missing values: BEFORE vs AFTER ---
+        st.subheader("Missing values per column (before vs after fix)")
+        missing_before = df.isna().sum().rename("Missing (before)")
+        missing_after  = corrected_df.isna().sum().rename("Missing (after)")
+        missing_compare = pd.concat([missing_before, missing_after], axis=1)
+        missing_compare["Δ fixed"] = (missing_compare["Missing (before)"] - missing_compare["Missing (after)"])
+        missing_compare = missing_compare.sort_values("Missing (after)", ascending=False)
+
+        st.dataframe(missing_compare, use_container_width=True)
+
+        # also show the final “after” table only (your requested slide content)
+        st.subheader("Missing values per column (after fix)")
+        st.dataframe(missing_after.to_frame("Missing Values"), use_container_width=True)
 
 except FileNotFoundError:
     st.error(f"File `{FILE_NAME}` not found in the repository. Upload it to the repo root and rerun.")
