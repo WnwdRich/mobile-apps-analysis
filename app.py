@@ -257,7 +257,7 @@ try:
         # =========================
         with slide3:
             # --- Analysis 1: Popular Categories by Installs ---
-            st.subheader("Popular Categories by Installs")
+            st.subheader("1.Popular Categories by Installs")
         
             # 1) Locate needed columns
             cat_col = find_col(df.columns, "category", "categories")
@@ -340,7 +340,7 @@ try:
                         f"- Rows used in this analysis: {kept_rows}"
                     )
             # --- Analysis 2: Type (Free/Paid) → Reviews & Rating (by Category) ---
-            st.markdown("### Type (Free/Paid) → Reviews & Rating (by Category)")
+            st.markdown("### 2.Type (Free/Paid) → Reviews & Rating (by Category)")
             
             type_col    = find_col(df.columns, "type")
             cat_col     = find_col(df.columns, "category", "categories")
@@ -436,7 +436,7 @@ try:
                             st.dataframe(g2, use_container_width=True)
 
             # --- Analysis 3: Relationship between App Size and Rating ---
-            st.markdown("### Rating × Size buckets (counts)")
+            st.markdown("### 3.Rating × Size")
             
             st.write(
                 "- We exclude rows where **Rating is NaN**.  \n"
