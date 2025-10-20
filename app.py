@@ -520,6 +520,7 @@ try:
                                 tbl.index.name = "Rating (1 dp)"
                                 st.dataframe(tbl, use_container_width=True)
 
+            st.info("Conclusion: app size does not seem to affect rating (within <20MB, 20–50MB, 50–100MB).")
             # --- Analysis 4:---
             # --- Analysis 5:---
 
