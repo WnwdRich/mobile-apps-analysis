@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import re
-import matplotlib.pyplot as plt
+import altair as alt
 
 
 st.set_page_config(page_title="Mobile Apps – Slides", layout="wide")
@@ -589,34 +589,33 @@ try:
                     # ---- Top content rating by total installs ----
                     st.caption("Share of total installs by content rating")
                     if not cr.empty and cr["total_installs"].sum() > 0:
-                        labels = cr["_content"].astype(str).tolist()
-                        values = cr["total_installs"].astype(float).tolist()
-                    
-                        fig, ax = plt.subplots()
-                        wedges, texts, autotexts = ax.pie(
-                            values,
-                            labels=labels,
-                            autopct="%1.1f%%",
-                            startangle=90,
-                            counterclock=False
+                        # Altair donut chart
+                        pie = (
+                            alt.Chart(cr)
+                            .mark_arc(innerRadius=60)  # donut hole
+                            .encode(
+                                theta=alt.Theta("total_installs:Q", stack=True),
+                                color=alt.Color("_content:N", title="Content Rating"),
+                                tooltip=[
+                                    alt.Tooltip("_content:N", title="Content Rating"),
+                                    alt.Tooltip("total_installs:Q", title="Total installs", format=",.0f"),
+                                    alt.Tooltip("apps:Q", title="# Apps", format=",.0f"),
+                                    alt.Tooltip("avg_installs_per_app:Q", title="Avg installs/app", format=",.0f"),
+                                ],
+                            )
+                            .properties(width=360, height=360, title="Total installs by content rating")
                         )
-                        # Donut hole
-                        centre = plt.Circle((0, 0), 0.55, fc="white")
-                        fig.gca().add_artist(centre)
-                        ax.axis("equal")  # keep it circular
-                        st.pyplot(fig)
+                        st.altair_chart(pie, use_container_width=False)
                     else:
                         st.info("No install data available for a pie chart after filtering.")
+
                                   
                     # ---- Why this analysis? (short rationale) ----
                     st.info(
                         "We focus on Content Rating because installs are the key value signal. "
                         "Knowing which age groups (e.g., Everyone/Teen/Mature) drive more downloads helps decide the **target age segment** for a new app."
                     )
-                    
-                    # (Optional) simple chart for the slide
-                    st.caption("Total installs by content rating")
-                    st.bar_chart(cr.set_index("_content")[["total_installs"]])
+                  
 
                    
 except FileNotFoundError:
