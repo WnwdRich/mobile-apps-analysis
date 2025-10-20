@@ -2,6 +2,8 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import re
+import matplotlib.pyplot as plt
+
 
 st.set_page_config(page_title="Mobile Apps – Slides", layout="wide")
 st.title("Mobile Apps – Concise Slides")
@@ -585,9 +587,6 @@ try:
                     st.dataframe(nice.rename(columns={"_content": "Content Rating"}), use_container_width=True)
                     
                     # ---- Top content rating by total installs ----
-                    # ---- Pie chart: Total installs by content rating ----
-                    import matplotlib.pyplot as plt
-                    
                     st.caption("Share of total installs by content rating")
                     if not cr.empty and cr["total_installs"].sum() > 0:
                         labels = cr["_content"].astype(str).tolist()
