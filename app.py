@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 
 st.set_page_config(page_title="Mobile Apps Dataset", layout="wide")
-st.title("Mobile Apps Dataset – Duplicate Check")
+st.title("Mobile Apps Dataset – Data Quality Checks")
 
 FILE_NAME = "GoogleAppData.xlsx"
 
@@ -18,8 +18,8 @@ try:
 
     st.caption(f"Loaded **{FILE_NAME}** | Sheets: {', '.join(sheets)}")
 
-    tab_data, tab_duplicates, tab_dict = st.tabs(
-        ["📊 Data (Sheet 1)", "🔁 Duplicate Records", "📖 Dictionary (Sheet 2)"]
+    tab_data, tab_duplicates, tab_missing, tab_dict = st.tabs(
+        ["📊 Data (Sheet 1)", "🔁 Duplicate Records", "⚠️ Missing Values", "📖 Dictionary (Sheet 2)"]
     )
 
     # ---- Data preview ----
@@ -30,7 +30,7 @@ try:
     # ---- Duplicate detection ----
     with tab_duplicates:
         st.subheader("Detect duplicate rows (all columns identical)")
-        duplicated_mask = df.duplicated(keep=False)           # marks every duplicate group
+        duplicated_mask = df.duplicated(keep=False)
         duplicates = df[duplicated_mask]
 
         st.write(f"**Total duplicate rows:** {len(duplicates)} "
@@ -39,9 +39,25 @@ try:
 
         if not duplicates.empty:
             st.dataframe(duplicates, use_container_width=True)
-            st.caption("Showing duplicate rows.")
         else:
             st.success("✅ No duplicate records found — all rows are unique.")
+
+    # ---- Missing values analysis ----
+    with tab_missing:
+        st.subheader("Empty / Missing Values Analysis")
+        missing_count = df.isna().sum()
+        missing_percent = (df.isna().mean() * 100).round(2)
+        missing_summary = pd.DataFrame({
+            "Missing Values": missing_count,
+            "Missing %": missing_percent
+        }).sort_values(by="Missing %", ascending=False)
+
+        st.write(f"**Columns with at least one missing value:** {(missing_count > 0).sum()} out of {len(df.columns)}")
+        st.dataframe(missing_summary, use_container_width=True)
+
+        # Optional: bar chart for visualization
+        st.subheader("Visualize missing percentage by column")
+        st.bar_chart(missing_summary["Missing %"])
 
     # ---- Dictionary tab ----
     with tab_dict:
