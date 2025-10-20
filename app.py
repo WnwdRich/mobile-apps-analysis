@@ -19,14 +19,14 @@ def load_excel(path: str):
 # ---------- Helpers ----------
 def to_int_like(x):
     """Parse numbers like '1,234+' -> 1234 (float)."""
-    if pd.isna(x): 
+    if pd.isna(x):
         return np.nan
     s = str(x).strip().replace(",", "").replace("+", "")
     return pd.to_numeric(s, errors="coerce")
 
 def size_to_mb(x):
     """Parse '15M', '500k', '1.2G', 'Varies with device' -> MB (float)."""
-    if pd.isna(x): 
+    if pd.isna(x):
         return np.nan
     s = str(x).strip().lower().replace(" ", "")
     if "varies" in s:
@@ -60,17 +60,17 @@ def row_fail_score(row, cols):
 
     if c_rating and not pd.isna(row[c_rating]):
         val = pd.to_numeric(row[c_rating], errors="coerce")
-        if pd.isna(val) or val < 0 or val > 5: 
+        if pd.isna(val) or val < 0 or val > 5:
             score += 1
 
     if c_reviews and not pd.isna(row[c_reviews]):
         val = pd.to_numeric(row[c_reviews], errors="coerce")
-        if pd.isna(val) or val < 0: 
+        if pd.isna(val) or val < 0:
             score += 1
 
     if c_inst and not pd.isna(row[c_inst]):
         val = to_int_like(row[c_inst])
-        if pd.isna(val) or val < 0: 
+        if pd.isna(val) or val < 0:
             score += 1
 
     if c_size and not pd.isna(row[c_size]):
@@ -93,11 +93,13 @@ try:
     df, dict_df, sheets = load_excel(FILE_NAME)
     st.caption(f"Loaded **{FILE_NAME}** | Sheets: {', '.join(sheets)}")
 
-slide1, slide2, slide3 = st.tabs([
-    "📄 Slide 1 – Dataset + Definitions",
-    "🧪 Slide 2 – Data Quality",
-    "📌 Slide 3 – Insights & Findings"
-])
+    # TABS — keep them INSIDE the try block
+    slide1, slide2, slide3 = st.tabs([
+        "📄 Slide 1 – Dataset + Definitions",
+        "🧪 Slide 2 – Data Quality",
+        "📌 Slide 3 – Insights & Findings"
+    ])
+
     # =========================
     # Slide 1 – Dataset + Definitions
     # =========================
@@ -216,8 +218,7 @@ slide1, slide2, slide3 = st.tabs([
             rev_num = cleaned_df[reviews_col].apply(to_int_like)
             rating_is_null = cleaned_df[rating_col].isna()
             special_rating_missing = rating_is_null & (rev_num.fillna(0) > 0)
-            # override: don't count Rating NaN when Reviews == 0
-            miss_mask[rating_col] = special_rating_missing
+            miss_mask[rating_col] = special_rating_missing  # override
         # Type: keep default (true nulls already marked)
 
         # Final counts
@@ -251,21 +252,20 @@ slide1, slide2, slide3 = st.tabs([
             compare["Δ removed (dupes/misaligned exclusions)"] = compare["Missing (before)"] - compare["Missing Values"]
             st.dataframe(compare.sort_values("Missing Values", ascending=False), use_container_width=True)
 
-# =========================
-# Slide 3 – Insights & Findings 
-# =========================
-with slide3:
-    st.subheader("Key Insights (to be added)")
-    st.write("Add your top 3–5 insights here. Keep them short and impactful.")
+    # =========================
+    # Slide 3 – Insights & Findings
+    # =========================
+    with slide3:
+        st.subheader("Key Insights (to be added)")
+        st.write("Add your top 3–5 insights here. Keep them short and impactful.")
 
-    st.markdown("---")
-    st.subheader("Supporting Visuals (optional)")
-    st.write("Place charts/tables that support the insights here.")
+        st.markdown("---")
+        st.subheader("Supporting Visuals (optional)")
+        st.write("Place charts/tables that support the insights here.")
 
-    st.markdown("---")
-    st.subheader("Notes / Caveats")
-    st.write("Mention data quality caveats, assumptions, or limitations here.")
-
+        st.markdown("---")
+        st.subheader("Notes / Caveats")
+        st.write("Mention data quality caveats, assumptions, or limitations here.")
 
 except FileNotFoundError:
     st.error(f"File `{FILE_NAME}` not found in the repository. Upload it to the repo root and rerun.")
