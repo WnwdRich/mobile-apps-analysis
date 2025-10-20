@@ -434,6 +434,95 @@ try:
                             g2["median_reviews"] = g2["median_reviews"].round(1)
                             st.write("**Reviews summary**")
                             st.dataframe(g2, use_container_width=True)
+
+            # --- Analysis 3: Relationship between App Size and Rating ---
+            st.markdown("### App Size ↔ Rating")
+            
+            st.write(
+                "- We exclude rows where **Rating is NaN**.  \n"
+                "- We exclude rows where **Size = 'Varies with device'** (treated as missing size).  \n"
+                "- Then we analyze the relationship between size (in MB) and rating."
+            )
+            
+            # Columns
+            size_col   = find_col(df.columns, "size", "app_size")
+            rating_col = find_col(df.columns, "rating", "ratings")
+            reviews_col = find_col(df.columns, "reviews", "review_count", "num_reviews")  # optional use
+            
+            if not size_col or not rating_col:
+                st.error("Could not find 'Size' or 'Rating' columns.")
+            else:
+                # 1) Deduplicate identical rows
+                base = df.drop_duplicates(keep="first").copy()
+            
+                # 2) Parse fields
+                base["_size_mb"]  = base[size_col].apply(size_to_mb)          # 'Varies with device' -> NaN
+                base["_rating"]   = pd.to_numeric(base[rating_col], errors="coerce")
+                base["_reviews"]  = base[reviews_col].apply(to_int_like) if reviews_col else np.nan
+            
+                # 3) Filter per your rule: drop NaN Rating or NaN Size
+                view = base.dropna(subset=["_size_mb", "_rating"]).copy()
+            
+                # Optional UI: trim extreme sizes & set a minimum reviews threshold
+                c1, c2, c3 = st.columns(3)
+                with c1:
+                    max_size = st.slider("Max size to include (MB)", 50, 3000, 1000, step=50)
+                with c2:
+                    min_size = st.slider("Min size to include (MB)", 0, 200, 0, step=10)
+                with c3:
+                    min_reviews = st.number_input("Min reviews (optional)", min_value=0, value=0, step=10)
+            
+                filt = (view["_size_mb"].between(min_size, max_size))
+                if reviews_col and min_reviews > 0:
+                    filt &= (view["_reviews"].fillna(0) >= min_reviews)
+            
+                data_sr = view[filt].copy()
+            
+                if data_sr.empty:
+                    st.info("No rows after filtering (try relaxing the filters).")
+                else:
+                    # 4) Summary stats
+                    pearson = data_sr[["_size_mb", "_rating"]].corr(method="pearson").iloc[0,1]
+                    spearman = data_sr[["_size_mb", "_rating"]].corr(method="spearman").iloc[0,1]
+                    m1, m2, m3 = st.columns(3)
+                    with m1: st.metric("Rows used", len(data_sr))
+                    with m2: st.metric("Pearson r (size↔rating)", f"{pearson:.3f}")
+                    with m3: st.metric("Spearman ρ (rank corr.)", f"{spearman:.3f}")
+            
+                    # 5) Scatter: Size (MB) vs Rating
+                    st.caption("Scatter: Size (MB) vs Rating")
+                    st.scatter_chart(data_sr.rename(columns={"_size_mb": "Size_MB", "_rating": "Rating"})[["Size_MB", "Rating"]])
+            
+                    # 6) Binned view (helps see trend)
+                    st.caption("Average rating by size buckets")
+                    # Create size buckets (quantiles) for robust bins
+                    try:
+                        data_sr["_size_bin"] = pd.qcut(data_sr["_size_mb"], q=10, duplicates="drop")
+                    except Exception:
+                        # fallback to fixed-width bins if too few unique sizes
+                        data_sr["_size_bin"] = pd.cut(data_sr["_size_mb"], bins=10)
+            
+                    binned = (
+                        data_sr
+                        .groupby("_size_bin", as_index=False)
+                        .agg(apps=(" _size_mb", "size"))  # will fix name next line
+                    )
+                    # fix apps count (the previous agg name had a leading space by mistake)
+                    binned = data_sr.groupby("_size_bin", as_index=False).agg(
+                        apps=("_size_mb", "size"),
+                        mean_rating=("_rating", "mean"),
+                        median_rating=("_rating", "median")
+                    )
+                    # Order bins nicely for chart
+                    binned["bin_str"] = binned["_size_bin"].astype(str)
+                    st.bar_chart(binned.set_index("bin_str")[["mean_rating"]])
+            
+                    with st.expander("Table (optional)"):
+                        show_tbl = binned[["bin_str", "apps", "mean_rating", "median_rating"]].copy()
+                        show_tbl["mean_rating"] = show_tbl["mean_rating"].round(2)
+                        show_tbl["median_rating"] = show_tbl["median_rating"].round(2)
+                        st.dataframe(show_tbl.rename(columns={"bin_str": "Size bucket"}), use_container_width=True)
+
  
 except FileNotFoundError:
     st.error(f"File `{FILE_NAME}` not found in the repository. Upload it to the repo root and rerun.")
