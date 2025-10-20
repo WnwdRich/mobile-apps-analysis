@@ -342,42 +342,63 @@ try:
             # --- Analysis 2: Type (Free/Paid) → Reviews & Rating (by Category) ---
             st.markdown("### Type (Free/Paid) → Reviews & Rating (by Category)")
             
-            type_col   = find_col(df.columns, "type")
-            cat_col    = find_col(df.columns, "category", "categories")
-            rating_col = find_col(df.columns, "rating", "ratings")
-            reviews_col= find_col(df.columns, "reviews", "review_count", "num_reviews")
+            type_col    = find_col(df.columns, "type")
+            cat_col     = find_col(df.columns, "category", "categories")
+            rating_col  = find_col(df.columns, "rating", "ratings")
+            reviews_col = find_col(df.columns, "reviews", "review_count", "num_reviews")
+            
+            def normalize_type(x):
+                """Allow only exact Free/Paid; anything else -> NaN (dropped)."""
+                if pd.isna(x): 
+                    return np.nan
+                s = str(x).strip().lower()
+                if s == "free": return "Free"
+                if s == "paid": return "Paid"
+                return np.nan
             
             if not all([type_col, cat_col, rating_col, reviews_col]):
-                st.info("Type analysis skipped (missing Type/Category/Rating/Reviews column).")
+                st.info("Type analysis skipped (missing Type/Category/Rating/Reviews).")
             else:
+                # Start from deduplicated data
                 base_t = df.drop_duplicates(keep="first").copy()
-                base_t["_type"]    = base_t[type_col].astype(str).str.strip().str.title()  # normalize to 'Free'/'Paid'
+            
+                # Normalize fields
+                base_t["_type"]    = base_t[type_col].apply(normalize_type)     # only Free/Paid survive
                 base_t["_rating"]  = pd.to_numeric(base_t[rating_col], errors="coerce")
                 base_t["_reviews"] = base_t[reviews_col].apply(to_int_like)
-                base_t = base_t.dropna(subset=[cat_col, type_col])
+            
+                # Keep rows that have a Category and a valid Type (Free/Paid)
+                base_t = base_t.dropna(subset=[cat_col, "_type"])
+                base_t = base_t[base_t["_type"].isin(["Free", "Paid"])]
                 base_t["._dummy"] = 1
             
-                cat_options_t = ["All categories"] + sorted(base_t[cat_col].dropna().astype(str).unique().tolist())
-                sel_cat_t = st.selectbox("Choose category (Type analysis)", cat_options_t, key="type_cat_select")
+                # Optional: exclude likely misaligned rows detected in Slide 2
+                # base_t = base_t[~base_t.index.isin(suspicious_idx)]
+            
+                # Category selector
+                cat_opts = ["All categories"] + sorted(base_t[cat_col].dropna().astype(str).unique().tolist())
+                sel_cat_t = st.selectbox("Choose category (Type analysis)", cat_opts, key="type_cat_select_clean")
                 view_t = base_t if sel_cat_t == "All categories" else base_t[base_t[cat_col].astype(str) == sel_cat_t]
             
                 if view_t.empty:
                     st.info("No data for the selected category after parsing and filtering.")
                 else:
-                    # Ratings (ignore NaN ratings)
-                    rating_view_t = view_t.dropna(subset=["_rating"]).copy()
-                    r_t = (
-                        rating_view_t.groupby("_type", as_index=False)
+                    # Use the SAME filtered view for both ratings & reviews (consistency)
+            
+                    # Ratings: drop rows where rating is NaN
+                    r_view = view_t.dropna(subset=["_rating"])
+                    r_g = (
+                        r_view.groupby("_type", as_index=False)
                         .agg(apps=("._dummy", "size"),
                              mean_rating=("_rating", "mean"),
                              median_rating=("_rating", "median"))
                         .sort_values("_type")
                     )
             
-                    # Reviews (keep zero; drop NaN reviews only)
-                    reviews_view_t = view_t.dropna(subset=["_reviews"]).copy()
-                    v_t = (
-                        reviews_view_t.groupby("_type", as_index=False)
+                    # Reviews: drop rows where reviews is NaN (keep zeros)
+                    v_view = view_t.dropna(subset=["_reviews"])
+                    v_g = (
+                        v_view.groupby("_type", as_index=False)
                         .agg(apps=("._dummy", "size"),
                              total_reviews=("_reviews", "sum"),
                              mean_reviews=("_reviews", "mean"),
@@ -385,29 +406,29 @@ try:
                         .sort_values("_type")
                     )
             
-                    c3, c4 = st.columns(2)
-                    with c3:
+                    c1, c2 = st.columns(2)
+                    with c1:
                         st.caption("Average rating by Type")
-                        if not r_t.empty:
-                            st.bar_chart(r_t.set_index("_type")[["mean_rating"]])
+                        if not r_g.empty:
+                            st.bar_chart(r_g.set_index("_type")[["mean_rating"]])
                         else:
                             st.info("No rating data after filtering.")
-                    with c4:
+                    with c2:
                         st.caption("Total reviews by Type")
-                        if not v_t.empty:
-                            st.bar_chart(v_t.set_index("_type")[["total_reviews"]])
+                        if not v_g.empty:
+                            st.bar_chart(v_g.set_index("_type")[["total_reviews"]])
                         else:
                             st.info("No reviews data after filtering.")
             
-                    with st.expander("Tables (optional) - Type impact"):
-                        if not r_t.empty:
-                            g1 = r_t.copy()
+                    with st.expander("Tables (optional)"):
+                        if not r_g.empty:
+                            g1 = r_g.copy()
                             g1["mean_rating"] = g1["mean_rating"].round(2)
                             g1["median_rating"] = g1["median_rating"].round(2)
                             st.write("**Ratings summary**")
                             st.dataframe(g1, use_container_width=True)
-                        if not v_t.empty:
-                            g2 = v_t.copy()
+                        if not v_g.empty:
+                            g2 = v_g.copy()
                             g2["total_reviews"] = g2["total_reviews"].round(0).astype("int64").map(lambda x: f"{x:,}")
                             g2["mean_reviews"] = g2["mean_reviews"].round(1)
                             g2["median_reviews"] = g2["median_reviews"].round(1)
