@@ -150,12 +150,43 @@ try:
         else:
             st.success("✅ No strongly suspicious misalignment patterns detected.")
 
-        # --- Missing values per column ---
+        # --- Missing values per column (EXCLUDING dupes & misaligned) ---
         st.markdown("---")
-        st.subheader("Missing values per column")
-        missing_count = df.isna().sum()
-        missing_summary = pd.DataFrame({"Missing Values": missing_count}).sort_values("Missing Values", ascending=False)
-        st.dataframe(missing_summary, use_container_width=True)
+        st.subheader("Missing values per column (cleaned)")
+
+        # toggles
+        colA, colB, colC = st.columns(3)
+        with colA:
+            exclude_dupes = st.checkbox("Exclude duplicate rows", value=True)
+        with colB:
+            exclude_misaligned = st.checkbox("Exclude likely misaligned rows", value=True)
+        with colC:
+            show_compare = st.checkbox("Show before vs after comparison", value=False)
+
+        # build mask
+        mask = pd.Series(True, index=df.index)
+        if exclude_dupes:
+            mask &= ~duplicated_mask
+        if exclude_misaligned:
+            mask &= ~df.index.isin(suspicious_idx)
+
+        cleaned_df = df[mask]
+
+        # metrics
+        c6, c7 = st.columns(2)
+        with c6: st.metric("Rows used for NA counts", len(cleaned_df))
+        with c7: st.metric("Rows excluded", len(df) - len(cleaned_df))
+
+        # final NA counts (cleaned)
+        missing_clean = cleaned_df.isna().sum().rename("Missing Values").sort_values(ascending=False)
+        st.dataframe(missing_clean.to_frame(), use_container_width=True)
+
+        if show_compare:
+            st.subheader("Before vs After (diagnostic)")
+            missing_before = df.isna().sum().rename("Missing (before)")
+            compare = pd.concat([missing_before, missing_clean], axis=1)
+            compare["Δ removed (dupes/misaligned)"] = compare["Missing (before)"] - compare["Missing Values"]
+            st.dataframe(compare.sort_values("Missing Values", ascending=False), use_container_width=True)
 
 except FileNotFoundError:
     st.error(f"File `{FILE_NAME}` not found in the repository. Upload it to the repo root and rerun.")
