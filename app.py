@@ -256,16 +256,32 @@ try:
     # Slide 3 – Insights & Findings
     # =========================
     with slide3:
-        st.subheader("Key Insights (to be added)")
-        st.write("Add your top 3–5 insights here. Keep them short and impactful.")
-
-        st.markdown("---")
-        st.subheader("Supporting Visuals (optional)")
-        st.write("Place charts/tables that support the insights here.")
-
-        st.markdown("---")
-        st.subheader("Notes / Caveats")
-        st.write("Mention data quality caveats, assumptions, or limitations here.")
+        st.subheader("Popular Categories by Installs")
+    
+        # 1) Locate needed columns
+        cat_col = find_col(df.columns, "category", "categories")
+        inst_col = find_col(df.columns, "installs", "downloads")
+    
+        if not cat_col or not inst_col:
+            st.error("Could not find 'Category' or 'Installs' columns. Please check the column names in the dataset.")
+        else:
+            # 2) Deduplicate identical rows (keep first)
+            dedup = df.drop_duplicates(keep="first").copy()
+    
+            # 3) Clean installs → numeric
+            dedup["_installs_num"] = dedup[inst_col].apply(to_int_like)
+    
+            # 4) Drop rows with missing fields needed for this insight
+            clean_insight_df = dedup.dropna(subset=[cat_col, "_installs_num"]).copy()
+    
+            # 5) Aggregate
+            agg = (
+                clean_insight_df
+                .groupby(cat_col, dropna=False, as_index=False)
+                .agg(total_installs=("_installs_num", "sum"),
+                     avg_installs_per_app=("_installs_num", "mean"),
+                     apps=("._dummy", "size"))
+            )
 
 except FileNotFoundError:
     st.error(f"File `{FILE_NAME}` not found in the repository. Upload it to the repo root and rerun.")
