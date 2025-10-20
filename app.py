@@ -93,8 +93,11 @@ try:
     df, dict_df, sheets = load_excel(FILE_NAME)
     st.caption(f"Loaded **{FILE_NAME}** | Sheets: {', '.join(sheets)}")
 
-    slide1, slide2 = st.tabs(["📄 Slide 1 – Dataset + Definitions", "🧪 Slide 2 – Data Quality"])
-
+slide1, slide2, slide3 = st.tabs([
+    "📄 Slide 1 – Dataset + Definitions",
+    "🧪 Slide 2 – Data Quality",
+    "📌 Slide 3 – Insights & Findings"
+])
     # =========================
     # Slide 1 – Dataset + Definitions
     # =========================
@@ -247,6 +250,22 @@ try:
             compare = pd.concat([missing_before, missing_clean], axis=1)
             compare["Δ removed (dupes/misaligned exclusions)"] = compare["Missing (before)"] - compare["Missing Values"]
             st.dataframe(compare.sort_values("Missing Values", ascending=False), use_container_width=True)
+
+# =========================
+# Slide 3 – Insights & Findings 
+# =========================
+with slide3:
+    st.subheader("Key Insights (to be added)")
+    st.write("Add your top 3–5 insights here. Keep them short and impactful.")
+
+    st.markdown("---")
+    st.subheader("Supporting Visuals (optional)")
+    st.write("Place charts/tables that support the insights here.")
+
+    st.markdown("---")
+    st.subheader("Notes / Caveats")
+    st.write("Mention data quality caveats, assumptions, or limitations here.")
+
 
 except FileNotFoundError:
     st.error(f"File `{FILE_NAME}` not found in the repository. Upload it to the repo root and rerun.")
