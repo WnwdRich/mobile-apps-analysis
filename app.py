@@ -585,14 +585,30 @@ try:
                     st.dataframe(nice.rename(columns={"_content": "Content Rating"}), use_container_width=True)
                     
                     # ---- Top content rating by total installs ----
-                    top_row = cr.iloc[0]
-                    st.markdown(
-                        f"**Top content rating by total installs:** `{top_row['_content']}`  \n"
-                        f"• Total installs: **{int(top_row['total_installs']):,}**  \n"
-                        f"• Apps in this segment: **{int(top_row['apps']):,}**  \n"
-                        f"• Average installs/app: **{int(top_row['avg_installs_per_app']):,}**"
-                    )
+                    # ---- Pie chart: Total installs by content rating ----
+                    import matplotlib.pyplot as plt
                     
+                    st.caption("Share of total installs by content rating")
+                    if not cr.empty and cr["total_installs"].sum() > 0:
+                        labels = cr["_content"].astype(str).tolist()
+                        values = cr["total_installs"].astype(float).tolist()
+                    
+                        fig, ax = plt.subplots()
+                        wedges, texts, autotexts = ax.pie(
+                            values,
+                            labels=labels,
+                            autopct="%1.1f%%",
+                            startangle=90,
+                            counterclock=False
+                        )
+                        # Donut hole
+                        centre = plt.Circle((0, 0), 0.55, fc="white")
+                        fig.gca().add_artist(centre)
+                        ax.axis("equal")  # keep it circular
+                        st.pyplot(fig)
+                    else:
+                        st.info("No install data available for a pie chart after filtering.")
+                                  
                     # ---- Why this analysis? (short rationale) ----
                     st.info(
                         "We focus on Content Rating because installs are the key value signal. "
