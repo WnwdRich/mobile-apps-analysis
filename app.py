@@ -12,39 +12,46 @@ FILE_NAME = "GoogleAppData.xlsx"
 @st.cache_data
 def load_excel(path: str):
     xls = pd.ExcelFile(path)
-    data = pd.read_excel(xls, xls.sheet_names[0])
-    dictionary = pd.read_excel(xls, xls.sheet_names[1]) if len(xls.sheet_names) > 1 else None
+    data = pd.read_excel(xls, xls.sheet_names[0])                  # Sheet 1: dataset
+    dictionary = pd.read_excel(xls, xls.sheet_names[1]) if len(xls.sheet_names) > 1 else None  # Sheet 2: definitions
     return data, dictionary, xls.sheet_names
 
-# ---------- Helpers for misalignment ----------
+# ---------- Helpers ----------
 def to_int_like(x):
-    if pd.isna(x): return np.nan
+    """Parse numbers like '1,234+' -> 1234 (float)."""
+    if pd.isna(x): 
+        return np.nan
     s = str(x).strip().replace(",", "").replace("+", "")
     return pd.to_numeric(s, errors="coerce")
 
 def size_to_mb(x):
-    if pd.isna(x): return np.nan
-    s = str(x).strip().lower()
-    if "varies" in s: return np.nan
-    s = s.replace(" ", "")
+    """Parse '15M', '500k', '1.2G', 'Varies with device' -> MB (float)."""
+    if pd.isna(x): 
+        return np.nan
+    s = str(x).strip().lower().replace(" ", "")
+    if "varies" in s:
+        return np.nan
     m = re.match(r"^([\d\.]+)([kmg])?b?$", s)
     if not m:
         return pd.to_numeric(s, errors="coerce")
     val = float(m.group(1)); unit = m.group(2)
-    if unit == "k": return val/1024
-    if unit == "g": return val*1024
-    return val  # MB default
+    if unit == "k": return val / 1024
+    if unit == "g": return val * 1024
+    return val  # default MB
 
 def find_col(cols, *aliases):
+    """Case-insensitive finder with substring fallback."""
     low = {c.lower(): c for c in cols}
     for a in aliases:
-        if a.lower() in low: return low[a.lower()]
+        if a.lower() in low:
+            return low[a.lower()]
     for c in cols:
         if any(a.lower() in c.lower() for a in aliases):
             return c
     return None
 
 def row_fail_score(row, cols):
+    """Simple validity checks used for misalignment heuristic."""
     score = 0
     c_rating  = find_col(cols, "rating", "ratings")
     c_reviews = find_col(cols, "reviews", "review_count", "num_reviews")
@@ -53,23 +60,28 @@ def row_fail_score(row, cols):
 
     if c_rating and not pd.isna(row[c_rating]):
         val = pd.to_numeric(row[c_rating], errors="coerce")
-        if pd.isna(val) or val < 0 or val > 5: score += 1
+        if pd.isna(val) or val < 0 or val > 5: 
+            score += 1
 
     if c_reviews and not pd.isna(row[c_reviews]):
         val = pd.to_numeric(row[c_reviews], errors="coerce")
-        if pd.isna(val) or val < 0: score += 1
+        if pd.isna(val) or val < 0: 
+            score += 1
 
     if c_inst and not pd.isna(row[c_inst]):
         val = to_int_like(row[c_inst])
-        if pd.isna(val) or val < 0: score += 1
+        if pd.isna(val) or val < 0: 
+            score += 1
 
     if c_size and not pd.isna(row[c_size]):
         val = size_to_mb(row[c_size])
-        if pd.isna(val) or val <= 0 or val > 5120: score += 1  # sanity 0..5GB
+        if pd.isna(val) or val <= 0 or val > 5120:   # sanity: 0..5GB
+            score += 1
 
     return score
 
 def shift_row_right_by_1(row):
+    """Simulate a one-column right shift to detect left-shifted rows."""
     vals = row.values
     shifted = np.empty_like(vals, dtype=object)
     shifted[0] = np.nan
@@ -109,8 +121,8 @@ try:
         c1, c2, c3 = st.columns(3)
         with c1: st.metric("Total rows", len(df))
         with c2: st.metric("Duplicate rows", len(duplicates))
-        with c3: 
-            pct = (len(duplicates)/len(df)*100) if len(df) else 0
+        with c3:
+            pct = (len(duplicates) / len(df) * 100) if len(df) else 0
             st.metric("Duplicate %", f"{pct:.2f}%")
 
         if not duplicates.empty:
@@ -122,9 +134,9 @@ try:
         st.markdown("---")
         st.subheader("Misaligned (left-shift) test – explanation")
         st.write(
-            "- We validate each row with simple rules (Rating 0–5, Installs/Reviews ≥ 0 after cleaning, Size parseable 0–5120MB).\n"
-            "- Then we simulate a **1-column right shift** to detect rows that were likely left-shifted during export.\n"
-            "- If shifting right reduces failures significantly, we flag the row as **Likely misaligned**."
+            "- Validate each row (Rating 0–5, Installs/Reviews ≥ 0 after cleaning, Size 0–5120MB).  \n"
+            "- Simulate a **1-column right shift** to detect rows likely left-shifted during export.  \n"
+            "- If shifting right reduces failures significantly, flag as **Likely misaligned**."
         )
 
         # Compute validation scores
@@ -150,52 +162,91 @@ try:
         else:
             st.success("✅ No strongly suspicious misalignment patterns detected.")
 
-# Custom missing-values logic
+        # --- Missing values per column (with exclusions + custom logic) ---
+        st.markdown("---")
+        st.subheader("Missing values per column (cleaned with custom rules)")
 
-# Helper: locate columns by common names
-rating_col = find_col(cleaned_df.columns, "rating", "ratings")
-reviews_col = find_col(cleaned_df.columns, "reviews", "review_count", "num_reviews")
-size_col = find_col(cleaned_df.columns, "size", "app_size")
-type_col = find_col(cleaned_df.columns, "type")
-content_col = find_col(cleaned_df.columns, "content rating", "content_rating", "contentrating")
+        # Toggles
+        colA, colB, colC = st.columns(3)
+        with colA:
+            exclude_dupes = st.checkbox("Exclude duplicate rows", value=True)
+        with colB:
+            exclude_misaligned = st.checkbox("Exclude likely misaligned rows", value=True)
+        with colC:
+            show_compare = st.checkbox("Show before vs after", value=False)
 
-# Start with standard nulls
-miss_mask = cleaned_df.isna().copy()
+        # Build row mask
+        use_mask = pd.Series(True, index=df.index)
+        if exclude_dupes:
+            use_mask &= ~duplicated_mask
+        if exclude_misaligned:
+            use_mask &= ~df.index.isin(suspicious_idx)
 
-# SIZE: also count "Varies with device" as missing
-if size_col:
-    varies_mask = cleaned_df[size_col].astype(str).str.strip().str.lower().str.contains("varies with device", na=False)
-    miss_mask[size_col] = miss_mask[size_col] | varies_mask
+        cleaned_df = df[use_mask]
 
-# CONTENT RATING: count "Unrated" as missing
-if content_col:
-    unrated_mask = cleaned_df[content_col].astype(str).str.strip().str.lower().eq("unrated")
-    miss_mask[content_col] = miss_mask[content_col] | unrated_mask
+        c6, c7 = st.columns(2)
+        with c6: st.metric("Rows used for NA counts", len(cleaned_df))
+        with c7: st.metric("Rows excluded", len(df) - len(cleaned_df))
 
-# RATING: missing only if Reviews > 0 and Rating is NaN
-if rating_col and reviews_col:
-    # parse reviews to numeric (handles "1,234" etc.)
-    rev_num = cleaned_df[reviews_col].apply(to_int_like)
-    rating_is_null = cleaned_df[rating_col].isna()
-    special_rating_missing = rating_is_null & (rev_num.fillna(0) > 0)
-    # override the mask for Rating with this rule (don't count Rating NaN when Reviews == 0)
-    miss_mask[rating_col] = special_rating_missing
-elif rating_col:
-    # fallback if we couldn't find Reviews column
-    miss_mask[rating_col] = cleaned_df[rating_col].isna()
+        # ---- Custom missing logic ----
+        rating_col  = find_col(cleaned_df.columns, "rating", "ratings")
+        reviews_col = find_col(cleaned_df.columns, "reviews", "review_count", "num_reviews")
+        size_col    = find_col(cleaned_df.columns, "size", "app_size")
+        type_col    = find_col(cleaned_df.columns, "type")
+        content_col = find_col(cleaned_df.columns, "content rating", "content_rating", "contentrating")
 
-# TYPE: keep default (true nulls already in miss_mask[type_col])
+        # Start with true nulls
+        miss_mask = cleaned_df.isna().copy()
 
-# Final counts
-missing_clean = miss_mask.sum().rename("Missing Values").sort_values(ascending=False)
-st.dataframe(missing_clean.to_frame(), use_container_width=True)
+        # Size: also count "Varies with device" as missing
+        if size_col:
+            varies_mask = cleaned_df[size_col].astype(str).str.strip().str.lower().str.contains("varies with device", na=False)
+            miss_mask[size_col] = miss_mask[size_col] | varies_mask
 
-# (Optional) brief legend so graders see your logic:
-st.caption(
-    "Missing logic: Rating counted missing only when Reviews>0; Size also missing if value is 'Varies with device'; "
-    "Content Rating counts 'Unrated' as missing; Type uses only true nulls."
-)
+        # Content Rating: count "Unrated" as missing
+        if content_col:
+            unrated_mask = cleaned_df[content_col].astype(str).str.strip().str.lower().eq("unrated")
+            miss_mask[content_col] = miss_mask[content_col] | unrated_mask
 
+        # Rating: missing only if Reviews > 0 and Rating is NaN
+        if rating_col and reviews_col:
+            rev_num = cleaned_df[reviews_col].apply(to_int_like)
+            rating_is_null = cleaned_df[rating_col].isna()
+            special_rating_missing = rating_is_null & (rev_num.fillna(0) > 0)
+            # override: don't count Rating NaN when Reviews == 0
+            miss_mask[rating_col] = special_rating_missing
+        # Type: keep default (true nulls already marked)
+
+        # Final counts
+        missing_clean = miss_mask.sum().rename("Missing Values").sort_values(ascending=False)
+        st.dataframe(missing_clean.to_frame(), use_container_width=True)
+
+        if show_compare:
+            st.subheader("Before vs After (diagnostic)")
+            # Compute "before" with the same custom logic but on full df
+            df_full = df.copy()
+            miss_full = df_full.isna().copy()
+
+            size_col_full    = find_col(df_full.columns, "size", "app_size")
+            content_col_full = find_col(df_full.columns, "content rating", "content_rating", "contentrating")
+            rating_col_full  = find_col(df_full.columns, "rating", "ratings")
+            reviews_col_full = find_col(df_full.columns, "reviews", "review_count", "num_reviews")
+
+            if size_col_full:
+                varies_full = df_full[size_col_full].astype(str).str.strip().str.lower().str.contains("varies with device", na=False)
+                miss_full[size_col_full] = miss_full[size_col_full] | varies_full
+            if content_col_full:
+                unrated_full = df_full[content_col_full].astype(str).str.strip().str.lower().eq("unrated")
+                miss_full[content_col_full] = miss_full[content_col_full] | unrated_full
+            if rating_col_full and reviews_col_full:
+                rev_num_full = df_full[reviews_col_full].apply(to_int_like)
+                rating_null_full = df_full[rating_col_full].isna()
+                miss_full[rating_col_full] = rating_null_full & (rev_num_full.fillna(0) > 0)
+
+            missing_before = miss_full.sum().rename("Missing (before)")
+            compare = pd.concat([missing_before, missing_clean], axis=1)
+            compare["Δ removed (dupes/misaligned exclusions)"] = compare["Missing (before)"] - compare["Missing Values"]
+            st.dataframe(compare.sort_values("Missing Values", ascending=False), use_container_width=True)
 
 except FileNotFoundError:
     st.error(f"File `{FILE_NAME}` not found in the repository. Upload it to the repo root and rerun.")
