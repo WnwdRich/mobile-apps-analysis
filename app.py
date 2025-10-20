@@ -94,100 +94,8 @@ def optimal_align_row(row: pd.Series,
                       invalid_penalty: float = 100.0,
                       stay_bias: float = 0.0):
     """
-    Reassign only the cells that look wrong, using Hungarian assignment:
-    - Agents = suspicious (non-null & invalid) cells
-    - Tasks  = candidate target columns within ±window that validate that value
-              (+ fallback including original column with high invalid_penalty)
-    We keep columns that already validate as FIXED (not changed).
-    Returns: corrected_row (Series), changes (list of dict), improved(bool), delta_fail(int)
-    """
-    cols = list(row.index)
-    n = len(cols)
-    col_idx = {c:i for i,c in enumerate(cols)}
-    vals = row.values.copy()
-
-    # Build validators map for quick check
-    def is_valid(col, v):
-        fn = validators.get(col)
-        return bool(fn and fn(v))
-
-    # Fixed columns: non-null & valid (or within protected first N columns)
-    fixed_mask = np.zeros(n, dtype=bool)
-    for j, c in enumerate(cols):
-        v = vals[j]
-        if j < protect_first_cols and pd.notna(v):
-            fixed_mask[j] = True
-        elif pd.notna(v) and is_valid(c, v):
-            fixed_mask[j] = True
-
-    # Suspicious cells set (non-null & not fixed)
-    mis_cols = [j for j,c in enumerate(cols) if (pd.notna(vals[j]) and not fixed_mask[j])]
-    if not mis_cols:
-        return row, [], False, 0  # nothing to do
-
-    # Candidate target columns (free columns only)
-    free_cols = [j for j in range(n) if not fixed_mask[j]]
-
-    # Build cost matrix for Hungarian: shape (len(mis_cols), len(free_cols))
-    # Cost rules:
-    # - If value validates in target col: cost = distance_weight * |j - t|  (+ small bias for staying put)
-    # - If not valid: cost = invalid_penalty + distance_weight * |j - t|
-    # We’ll solve and then only apply moves that land on valid targets.
-    cost = np.zeros((len(mis_cols), len(free_cols)))
-    valid_matrix = np.zeros_like(cost, dtype=bool)
-
-    for a_idx, j in enumerate(mis_cols):
-        v = vals[j]
-        for b_idx, t in enumerate(free_cols):
-            col_t = cols[t]
-            dist = abs(j - t)
-            valid_here = is_valid(col_t, v)
-            valid_matrix[a_idx, b_idx] = valid_here
-            cst = (distance_weight * dist) + (0.0 if (t != j) else stay_bias)
-            if not valid_here:
-                cst += invalid_penalty
-            cost[a_idx, b_idx] = cst
-
-    # Solve assignment
-    row_ind, col_ind = linear_sum_assignment(cost)
-    assigned = list(zip([mis_cols[i] for i in row_ind], [free_cols[j] for j in col_ind]))
-
-    # Build corrected copy, but only apply moves that land on VALID targets
-    corrected = row.copy()
-    changes = []
-    used_targets = set()
-
-    for orig_j, tgt_j in assigned:
-        v = vals[orig_j]
-        tgt_col = cols[tgt_j]
-        # Only move if target validates and not already used
-        if valid_matrix[row_ind[list(mis_cols).index(orig_j)],
-                        col_ind[list(free_cols).index(tgt_j)]] and (tgt_j not in used_targets):
-            # Don't overwrite a currently valid (fixed) target (shouldn't be in free_cols, but double-check)
-            if fixed_mask[tgt_j]:
-                continue
-            # Move value
-            corrected.iat[tgt_j] = v
-            corrected.iat[orig_j] = np.nan
-            used_targets.add(tgt_j)
-            changes.append({"from": cols[orig_j], "to": tgt_col, "value": v})
-
-    # Evaluate improvement
-    before = row_fail_score(row, validators)
-    after  = row_fail_score(corrected, validators)
-    improved = after < before
-    return corrected, changes, improved, (before - after)
-
-def optimal_align_row(row: pd.Series,
-                      validators: dict,
-                      window: int = 2,
-                      protect_first_cols: int = 1,
-                      distance_weight: float = 1.0,
-                      invalid_penalty: float = 100.0,
-                      stay_bias: float = 0.0):
-    """
     Reassign only suspicious cells using Hungarian assignment.
-    FIXED: correct handling of indices into valid_matrix; guards for empty sets.
+    Returns: corrected_row, changes(list), improved(bool), delta_fail(int)
     """
     cols = list(row.index)
     n = len(cols)
@@ -197,7 +105,7 @@ def optimal_align_row(row: pd.Series,
         fn = validators.get(col)
         return bool(fn and fn(v))
 
-    # Columns we won't touch: protected non-nulls + already-valid cells
+    # Fixed columns: protected non-nulls + already-valid cells
     fixed_mask = np.zeros(n, dtype=bool)
     for j, c in enumerate(cols):
         v = vals[j]
@@ -233,14 +141,13 @@ def optimal_align_row(row: pd.Series,
             cost[a_idx, b_idx] = cst
 
     # Solve assignment
-    from scipy.optimize import linear_sum_assignment
     row_ind, col_ind = linear_sum_assignment(cost)
 
     corrected = row.copy()
     changes = []
     used_targets = set()
 
-    # ✅ Correct indexing: use the (a_idx, b_idx) pairs directly
+    # Apply moves only when landing on VALID targets
     for a_idx, b_idx in zip(row_ind, col_ind):
         orig_j = mis_cols[a_idx]
         tgt_j  = free_cols[b_idx]
@@ -250,11 +157,48 @@ def optimal_align_row(row: pd.Series,
             used_targets.add(tgt_j)
             changes.append({"from": cols[orig_j], "to": cols[tgt_j], "value": vals[orig_j]})
 
-    # Only keep if improved
+    # Keep only if improved
     before = row_fail_score(row, validators)
     after  = row_fail_score(corrected, validators)
     improved = after < before
     return corrected, changes, improved, (before - after)
+
+def optimal_align_dataframe(df: pd.DataFrame,
+                            window: int = 2,
+                            protect_first_cols: int = 1,
+                            distance_weight: float = 1.0,
+                            invalid_penalty: float = 100.0,
+                            stay_bias: float = 0.0,
+                            min_improvement: int = 1):
+    """
+    Apply optimal_align_row to each row; accept only if fail-score improves by ≥ min_improvement.
+    Returns: corrected_df, changes_df, improved_rows
+    """
+    validators = build_validators(df.columns)
+    corrected = df.copy()
+    all_changes = []
+    improved_rows = 0
+
+    for idx in df.index:
+        row = df.loc[idx]
+        fixed_row, changes, improved, delta = optimal_align_row(
+            row,
+            validators,
+            window=window,
+            protect_first_cols=protect_first_cols,
+            distance_weight=distance_weight,
+            invalid_penalty=invalid_penalty,
+            stay_bias=stay_bias,
+        )
+        if improved and delta >= min_improvement:
+            corrected.loc[idx] = fixed_row
+            for ch in changes:
+                ch["row"] = idx
+            all_changes.extend(changes)
+            improved_rows += 1
+
+    changes_df = pd.DataFrame(all_changes)
+    return corrected, changes_df, improved_rows
 
 # =========================
 # Main app
