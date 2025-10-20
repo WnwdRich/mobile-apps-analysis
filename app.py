@@ -3,89 +3,157 @@ import pandas as pd
 import numpy as np
 import re
 
+# =========================
+# App config
+# =========================
 st.set_page_config(page_title="Mobile Apps – Slides", layout="wide")
 st.title("Mobile Apps – Concise Slides")
 
-FILE_NAME = "GoogleAppData.xlsx"
+FILE_NAME = "GoogleAppData.xlsx"  # make sure this file is in the repo root
 
-# ---------- Load ----------
+# =========================
+# Data loading
+# =========================
 @st.cache_data
 def load_excel(path: str):
     xls = pd.ExcelFile(path)
-    data = pd.read_excel(xls, xls.sheet_names[0])
-    dictionary = pd.read_excel(xls, xls.sheet_names[1]) if len(xls.sheet_names) > 1 else None
+    data = pd.read_excel(xls, xls.sheet_names[0])                   # Sheet 1: dataset
+    dictionary = pd.read_excel(xls, xls.sheet_names[1]) if len(xls.sheet_names) > 1 else None  # Sheet 2: definitions
     return data, dictionary, xls.sheet_names
 
-# ---------- Helpers for misalignment ----------
+# =========================
+# Helpers for validation/alignment
+# =========================
+def find_col(cols, *aliases):
+    """Find a column by exact (case-insensitive) or substring match from a list of aliases."""
+    low = {c.lower(): c for c in cols}
+    for a in aliases:
+        if a.lower() in low:
+            return low[a.lower()]
+    for c in cols:
+        if any(a.lower() in c.lower() for a in aliases):
+            return c
+    return None
+
 def to_int_like(x):
     if pd.isna(x): return np.nan
     s = str(x).strip().replace(",", "").replace("+", "")
     return pd.to_numeric(s, errors="coerce")
 
 def size_to_mb(x):
+    """Parse sizes like '15M', '500k', '1.2G', 'Varies with device' → MB."""
     if pd.isna(x): return np.nan
-    s = str(x).strip().lower()
+    s = str(x).strip().lower().replace(" ", "")
     if "varies" in s: return np.nan
-    s = s.replace(" ", "")
     m = re.match(r"^([\d\.]+)([kmg])?b?$", s)
-    if not m:
-        return pd.to_numeric(s, errors="coerce")
+    if not m: return pd.to_numeric(s, errors="coerce")
     val = float(m.group(1)); unit = m.group(2)
-    if unit == "k": return val/1024
-    if unit == "g": return val*1024
+    if unit == "k": return val/1024.0
+    if unit == "g": return val*1024.0
     return val  # MB default
 
-def find_col(cols, *aliases):
-    low = {c.lower(): c for c in cols}
-    for a in aliases:
-        if a.lower() in low: return low[a.lower()]
-    for c in cols:
-        if any(a.lower() in c.lower() for a in aliases):
-            return c
-    return None
+def build_validators(df):
+    """Return a dict {column_name: validator_fn(value)->bool} using column-name heuristics."""
+    cols = list(df.columns)
+    c_app  = find_col(cols, "app", "app_name", "title", "name")
+    c_cat  = find_col(cols, "category", "categories")
+    c_rate = find_col(cols, "rating", "ratings")
+    c_rev  = find_col(cols, "reviews", "review_count", "num_reviews")
+    c_inst = find_col(cols, "installs", "downloads")
+    c_size = find_col(cols, "size", "app_size")
 
-def row_fail_score(row, cols):
-    score = 0
-    c_rating  = find_col(cols, "rating", "ratings")
-    c_reviews = find_col(cols, "reviews", "review_count", "num_reviews")
-    c_inst    = find_col(cols, "installs", "downloads")
-    c_size    = find_col(cols, "size", "app_size")
+    def looks_text(v):
+        if pd.isna(v): return False
+        s = str(v).strip()
+        return bool(re.search(r"[A-Za-z]", s))  # at least one letter
 
-    if c_rating and not pd.isna(row[c_rating]):
-        val = pd.to_numeric(row[c_rating], errors="coerce")
-        if pd.isna(val) or val < 0 or val > 5: score += 1
+    validators = {}
+    if c_app:  validators[c_app]  = lambda v: looks_text(v)
+    if c_cat:  validators[c_cat]  = lambda v: looks_text(v)
+    if c_rate: validators[c_rate] = lambda v: (pd.to_numeric(v, errors="coerce") is not None) and (0 <= float(pd.to_numeric(v, errors="coerce")) <= 5)
+    if c_rev:  validators[c_rev]  = lambda v: (pd.to_numeric(v, errors="coerce") is not None) and (float(pd.to_numeric(v, errors="coerce")) >= 0)
+    if c_inst: validators[c_inst] = lambda v: (to_int_like(v) is not None) and pd.notna(to_int_like(v)) and (to_int_like(v) >= 0)
+    if c_size: validators[c_size] = lambda v: (size_to_mb(v) is not None) and pd.notna(size_to_mb(v)) and (0 < size_to_mb(v) <= 5120)
+    return validators
 
-    if c_reviews and not pd.isna(row[c_reviews]):
-        val = pd.to_numeric(row[c_reviews], errors="coerce")
-        if pd.isna(val) or val < 0: score += 1
+def cellwise_repair(df, window=2, passes=2, protect_first_cols=1):
+    """
+    Try to fix partially misaligned rows by relocating individual cell values
+    into a nearby column (±window) where they validate. Run multiple passes
+    until no more moves happen.
 
-    if c_inst and not pd.isna(row[c_inst]):
-        val = to_int_like(row[c_inst])
-        if pd.isna(val) or val < 0: score += 1
+    protect_first_cols: don't move values *out of* the first N columns (e.g., App name).
+    """
+    validators = build_validators(df)
+    cols = list(df.columns)
+    col_idx = {c: i for i, c in enumerate(cols)}
 
-    if c_size and not pd.isna(row[c_size]):
-        val = size_to_mb(row[c_size])
-        if pd.isna(val) or val <= 0 or val > 5120: score += 1  # sanity 0..5GB
+    corrected = df.copy()
+    changes = []
 
-    return score
+    for _ in range(passes):
+        moved_any = False
 
-def shift_row_right_by_1(row):
-    vals = row.values
-    shifted = np.empty_like(vals, dtype=object)
-    shifted[0] = np.nan
-    shifted[1:] = vals[:-1]
-    return pd.Series(shifted, index=row.index)
+        for ridx in range(len(corrected)):
+            row = corrected.iloc[ridx].copy()
 
-# ---------- App ----------
+            for c in cols:
+                j = col_idx[c]
+                v = row[c]
+
+                # nothing to move
+                if pd.isna(v):
+                    continue
+
+                # if this column has a validator and passes -> keep it
+                if c in validators and validators[c](v):
+                    continue
+
+                # don't move out of protected first columns
+                if j < protect_first_cols:
+                    continue
+
+                # try to relocate into a nearby valid target
+                best_target = None
+                left = max(0, j - window)
+                right = min(len(cols), j + window + 1)
+
+                for t in range(left, right):
+                    if t == j:
+                        continue
+                    target_col = cols[t]
+                    target_val = row[target_col]
+                    target_empty = pd.isna(target_val)
+                    target_invalid = (target_col in validators) and (not target_empty) and (not validators[target_col](target_val))
+
+                    if target_col in validators and validators[target_col](v) and (target_empty or target_invalid):
+                        best_target = target_col
+                        break  # greedy: first nearby valid slot
+
+                if best_target:
+                    corrected.at[corrected.index[ridx], best_target] = v
+                    corrected.at[corrected.index[ridx], c] = np.nan
+                    changes.append({"row": corrected.index[ridx], "from": c, "to": best_target, "value": v})
+                    moved_any = True
+
+        if not moved_any:
+            break
+
+    changes_df = pd.DataFrame(changes)
+    return corrected, changes_df
+
+# =========================
+# Main app
+# =========================
 try:
     df, dict_df, sheets = load_excel(FILE_NAME)
     st.caption(f"Loaded **{FILE_NAME}** | Sheets: {', '.join(sheets)}")
 
     slide1, slide2 = st.tabs(["📄 Slide 1 – Dataset + Definitions", "🧪 Slide 2 – Data Quality"])
 
-    # =========================
+    # -------------------------
     # Slide 1 – Dataset + Definitions
-    # =========================
+    # -------------------------
     with slide1:
         st.subheader("Dataset (first 50 rows)")
         st.dataframe(df.head(50), use_container_width=True)
@@ -97,88 +165,63 @@ try:
         else:
             st.info("No second sheet with column dictionary was found.")
 
-        # =========================
-    # Slide 2 – Data Quality
-    # =========================
+    # -------------------------
+    # Slide 2 – Data Quality (cell-level alignment → duplicates → missing)
+    # -------------------------
     with slide2:
-        # --- Misalignment explanation ---
-        st.subheader("Misaligned (left-shift) test – explanation")
-        st.write(
-            "- Validate each row (Rating 0–5, Installs/Reviews ≥ 0, Size parseable 0–5120MB). "
-            "Then simulate a **1-column right shift** to detect rows likely left-shifted during export. "
-            "If shifting reduces failures meaningfully, flag as **Likely misaligned**."
-        )
+        st.subheader("Cell-level alignment")
+        st.caption("Fix partially misaligned rows by relocating invalid cell values into nearby columns where they validate.")
+        cols = st.columns(3)
+        with cols[0]:
+            w = st.slider("Relocation window (± columns)", 1, 4, 2)
+        with cols[1]:
+            passes = st.slider("Repair passes", 1, 5, 2)
+        with cols[2]:
+            protect = st.number_input("Protect first N columns", min_value=0, max_value=len(df.columns), value=1)
 
-        # --- Compute validation scores + misalignment detection ---
-        orig_scores = df.apply(lambda r: row_fail_score(r, df.columns), axis=1)
-        shifted_df = df.apply(shift_row_right_by_1, axis=1)
-        shifted_scores = shifted_df.apply(lambda r: row_fail_score(r, shifted_df.columns), axis=1)
+        corrected_df, changes_df = cellwise_repair(df, window=w, passes=passes, protect_first_cols=protect)
 
-        results = pd.DataFrame({
-            "orig_fail_score": orig_scores,
-            "shift_right_fail_score": shifted_scores,
-            "improvement_if_shift_right": orig_scores - shifted_scores
-        })
+        c1, c2 = st.columns(2)
+        with c1: st.metric("Rows changed", int(changes_df["row"].nunique() if not changes_df.empty else 0))
+        with c2: st.metric("Total cell moves", len(changes_df))
 
-        suspicious_mask = (results["orig_fail_score"] >= 2) & (results["improvement_if_shift_right"] >= 2)
-        suspicious_idx = results[suspicious_mask].index
+        with st.expander("Show cell moves (first 200)"):
+            if changes_df.empty:
+                st.write("No cell-level moves suggested.")
+            else:
+                st.dataframe(changes_df.head(200), use_container_width=True)
 
-        c0, c1, c2 = st.columns(3)
-        with c0: st.metric("Total rows", len(df))
-        with c1: st.metric("Rows with ≥1 failed check", int((results["orig_fail_score"] >= 1).sum()))
-        with c2: st.metric("Likely misaligned rows", int(len(suspicious_idx)))
-
-        if len(suspicious_idx) > 0:
-            st.write("**Likely misaligned (left-shifted) rows (original view):**")
-            st.dataframe(df.loc[suspicious_idx], use_container_width=True)
-        else:
-            st.success("✅ No strongly suspicious misalignment patterns detected.")
+        with st.expander("Compare original vs corrected (sample of changed rows)"):
+            if changes_df.empty:
+                st.write("No differences to show.")
+            else:
+                sample_idx = list(changes_df["row"].unique())[:10]
+                side_by_side = pd.concat({"original": df.loc[sample_idx], "corrected": corrected_df.loc[sample_idx]}, axis=1)
+                st.dataframe(side_by_side, use_container_width=True)
 
         st.markdown("---")
-
-        # --- Build corrected_df by fixing only suspicious rows ---
-        st.subheader("Apply misalignment auto-fix (used for missing-values + duplicates)")
-        apply_fix = st.checkbox("Auto-fix likely misaligned rows (shift right by 1 where flagged)", value=True)
-
-        if apply_fix and len(suspicious_idx) > 0:
-            corrected_df = df.copy()
-            corrected_df.loc[suspicious_idx] = shifted_df.loc[suspicious_idx]
-            st.caption(f"Applied right-shift to {len(suspicious_idx)} rows.")
-        else:
-            corrected_df = df.copy()
-            st.caption("No auto-fix applied (using original data).")
-
-        # --- Duplicates on corrected data ---
-        st.subheader("Duplicate Records (after optional fix)")
-        duplicated_mask = corrected_df.duplicated(keep=False)
-        duplicates = corrected_df[duplicated_mask]
-
-        d1, d2 = st.columns(2)
-        with d1: st.metric("Duplicate rows", len(duplicates))
-        with d2:
-            pct = (len(duplicates)/len(corrected_df)*100) if len(corrected_df) else 0
-            st.metric("Duplicate %", f"{pct:.2f}%")
-
-        if not duplicates.empty:
-            st.dataframe(duplicates, use_container_width=True)
-        else:
-            st.success("✅ No duplicate records found.")
+        st.subheader("Duplicate Records (after alignment)")
+        dup_mask = corrected_df.duplicated(keep=False)
+        dups = corrected_df[dup_mask]
+        m1, m2, m3 = st.columns(3)
+        with m1: st.metric("Total rows", len(corrected_df))
+        with m2: st.metric("Duplicate rows", len(dups))
+        with m3: st.metric("Duplicate %", f"{(len(dups)/len(corrected_df)*100 if len(corrected_df) else 0):.2f}%")
+        st.dataframe(dups if not dups.empty else pd.DataFrame({"note": ["No duplicates found."]}), use_container_width=True)
 
         st.markdown("---")
+        st.subheader("Missing values per column (after alignment)")
+        missing_after = corrected_df.isna().sum().rename("Missing Values").sort_values(ascending=False)
+        st.dataframe(missing_after.to_frame(), use_container_width=True)
 
-        # --- Missing values: BEFORE vs AFTER ---
-        st.subheader("Missing values per column (before vs after fix)")
-        missing_before = df.isna().sum().rename("Missing (before)")
-        missing_after  = corrected_df.isna().sum().rename("Missing (after)")
-        missing_compare = pd.concat([missing_before, missing_after], axis=1)
-        missing_compare["Δ fixed"] = (missing_compare["Missing (before)"] - missing_compare["Missing (after)"])
-        missing_compare = missing_compare.sort_values("Missing (after)", ascending=False)
-
-        st.dataframe(missing_compare, use_container_width=True)
-
-        # also show the final “after” table only (your requested slide content)
-        st.subheader("Missing values per column (after fix)")
-        st.dataframe(missing_after.to_frame("Missing Values"), use_container_width=True)
+        # short method explanation (for your slide notes)
+        with st.expander("Method – misalignment test (short explanation)"):
+            st.write(
+                "- Validate each cell by the intended column type (e.g., Rating ∈ [0,5], Installs/Reviews ≥ 0, Size parseable 0–5120MB, App/Category look like text).\n"
+                "- For cells that don't validate, try moving the value only a few columns left/right to a place where it *does* validate, without overwriting a clearly valid value.\n"
+                "- Run multiple passes until no more improvements are found.\n"
+                "- Then compute **duplicates** and **missing values** on the aligned table."
+            )
 
 except FileNotFoundError:
     st.error(f"File `{FILE_NAME}` not found in the repository. Upload it to the repo root and rerun.")
