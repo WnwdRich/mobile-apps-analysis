@@ -256,6 +256,7 @@ try:
         # Slide 3 – Insights & Findings
         # =========================
         with slide3:
+            # --- Analysis 1: Popular Categories by Installs ---
             st.subheader("Popular Categories by Installs")
         
             # 1) Locate needed columns
@@ -338,83 +339,81 @@ try:
                         f"- Dropped rows with missing **Category** or **Installs** (after cleaning): {dropped_missing}  \n"
                         f"- Rows used in this analysis: {kept_rows}"
                     )
-                # --- Analysis 2: Ratings, Reviews, and their distribution ---
-                st.markdown("### Ratings × Reviews — Distribution")
-                
-                st.write(
-                    "- **Rule**: When `Reviews > 0`, `Rating` should not be `NaN`. When `Reviews = 0`, there is effectively **no rating**.  \n"
-                    "- Therefore, for this analysis we **ignore** rows where either `Rating` or `Reviews` is `NaN`."
-                )
-                
-                # Locate needed columns
-                rating_col = find_col(df.columns, "rating", "ratings")
-                reviews_col = find_col(df.columns, "reviews", "review_count", "num_reviews")
-                
-                if not rating_col or not reviews_col:
-                    st.error("Could not find 'Rating' or 'Reviews' columns.")
+            # --- Analysis 2: Type (Free/Paid) → Reviews & Rating (by Category) ---
+            st.markdown("### Type (Free/Paid) → Reviews & Rating (by Category)")
+            
+            type_col   = find_col(df.columns, "type")
+            cat_col    = find_col(df.columns, "category", "categories")
+            rating_col = find_col(df.columns, "rating", "ratings")
+            reviews_col= find_col(df.columns, "reviews", "review_count", "num_reviews")
+            
+            if not all([type_col, cat_col, rating_col, reviews_col]):
+                st.info("Type analysis skipped (missing Type/Category/Rating/Reviews column).")
+            else:
+                base_t = df.drop_duplicates(keep="first").copy()
+                base_t["_type"]    = base_t[type_col].astype(str).str.strip().str.title()  # normalize to 'Free'/'Paid'
+                base_t["_rating"]  = pd.to_numeric(base_t[rating_col], errors="coerce")
+                base_t["_reviews"] = base_t[reviews_col].apply(to_int_like)
+                base_t = base_t.dropna(subset=[cat_col, type_col])
+                base_t["._dummy"] = 1
+            
+                cat_options_t = ["All categories"] + sorted(base_t[cat_col].dropna().astype(str).unique().tolist())
+                sel_cat_t = st.selectbox("Choose category (Type analysis)", cat_options_t, key="type_cat_select")
+                view_t = base_t if sel_cat_t == "All categories" else base_t[base_t[cat_col].astype(str) == sel_cat_t]
+            
+                if view_t.empty:
+                    st.info("No data for the selected category after parsing and filtering.")
                 else:
-                    # 1) Deduplicate identical rows
-                    dedup2 = df.drop_duplicates(keep="first").copy()
-                
-                    # 2) Parse to numeric
-                    dedup2["_rating_num"] = pd.to_numeric(dedup2[rating_col], errors="coerce")
-                    dedup2["_reviews_num"] = dedup2[reviews_col].apply(to_int_like)
-                
-                    # 3) Keep only rows with both numbers present (ignore NaNs as requested)
-                    analysis_df = dedup2.dropna(subset=["_rating_num", "_reviews_num"]).copy()
-                    # Reviews must be >= 0; rows with 0 reviews contribute 0 anyway but keep them is harmless
-                    analysis_df = analysis_df[analysis_df["_reviews_num"] >= 0]
-                
-                    # 4) Group by rating (rounded to 1 decimal) and sum the reviews
-                    analysis_df["_rating_1dp"] = analysis_df["_rating_num"].round(1)
-                    analysis_df["._dummy"] = 1
-                
-                    reviews_by_rating = (
-                        analysis_df
-                        .groupby("_rating_1dp", as_index=False)
-                        .agg(
-                            total_reviews=("_reviews_num", "sum"),
-                            apps=("._dummy", "size"),
-                            avg_reviews_per_app=("_reviews_num", "mean"),
-                        )
-                        .sort_values("_rating_1dp")
-                        .reset_index(drop=True)
+                    # Ratings (ignore NaN ratings)
+                    rating_view_t = view_t.dropna(subset=["_rating"]).copy()
+                    r_t = (
+                        rating_view_t.groupby("_type", as_index=False)
+                        .agg(apps=("._dummy", "size"),
+                             mean_rating=("_rating", "mean"),
+                             median_rating=("_rating", "median"))
+                        .sort_values("_type")
                     )
-                
-                    # Controls
-                    c1, c2 = st.columns(2)
-                    with c1:
-                        show_table_rr = st.checkbox("Show table (reviews by rating)", value=False)
-                    with c2:
-                        min_reviews = st.number_input("Minimum total reviews to display (filter)", min_value=0, value=0, step=100)
-                
-                    filtered_rr = reviews_by_rating[reviews_by_rating["total_reviews"] >= min_reviews]
-                
-                    # Chart: total number of reviews per rating
-                    if not filtered_rr.empty:
-                        st.caption("Total **number of reviews** per rating (rounded to 1 decimal)")
-                        chart_rr = filtered_rr.set_index("_rating_1dp")[["total_reviews"]]
-                        st.bar_chart(chart_rr)
-                    else:
-                        st.info("No rating buckets meet the current filter.")
-                
-                    # Optional table
-                    if show_table_rr:
-                        nice_rr = filtered_rr.copy()
-                        nice_rr.rename(columns={"_rating_1dp": "rating"}, inplace=True)
-                        nice_rr["total_reviews"] = nice_rr["total_reviews"].round(0).astype("int64").map(lambda x: f"{x:,}")
-                        nice_rr["avg_reviews_per_app"] = nice_rr["avg_reviews_per_app"].round(1)
-                        st.dataframe(nice_rr, use_container_width=True)
-                
-                    # Tiny method note
-                    with st.expander("Method notes (Ratings × Reviews)"):
-                        st.write(
-                            f"- Dropped exact duplicates first.  \n"
-                            f"- Parsed `Reviews` → numeric (e.g., '1,234+' → 1234).  \n"
-                            f"- Ignored rows where either `Rating` or `Reviews` was `NaN`.  \n"
-                            f"- Grouped by `Rating` rounded to **1 decimal** (1.0, 1.1, …) and **summed** all reviews in each bucket."
-                        )
-  
+            
+                    # Reviews (keep zero; drop NaN reviews only)
+                    reviews_view_t = view_t.dropna(subset=["_reviews"]).copy()
+                    v_t = (
+                        reviews_view_t.groupby("_type", as_index=False)
+                        .agg(apps=("._dummy", "size"),
+                             total_reviews=("_reviews", "sum"),
+                             mean_reviews=("_reviews", "mean"),
+                             median_reviews=("_reviews", "median"))
+                        .sort_values("_type")
+                    )
+            
+                    c3, c4 = st.columns(2)
+                    with c3:
+                        st.caption("Average rating by Type")
+                        if not r_t.empty:
+                            st.bar_chart(r_t.set_index("_type")[["mean_rating"]])
+                        else:
+                            st.info("No rating data after filtering.")
+                    with c4:
+                        st.caption("Total reviews by Type")
+                        if not v_t.empty:
+                            st.bar_chart(v_t.set_index("_type")[["total_reviews"]])
+                        else:
+                            st.info("No reviews data after filtering.")
+            
+                    with st.expander("Tables (optional) - Type impact"):
+                        if not r_t.empty:
+                            g1 = r_t.copy()
+                            g1["mean_rating"] = g1["mean_rating"].round(2)
+                            g1["median_rating"] = g1["median_rating"].round(2)
+                            st.write("**Ratings summary**")
+                            st.dataframe(g1, use_container_width=True)
+                        if not v_t.empty:
+                            g2 = v_t.copy()
+                            g2["total_reviews"] = g2["total_reviews"].round(0).astype("int64").map(lambda x: f"{x:,}")
+                            g2["mean_reviews"] = g2["mean_reviews"].round(1)
+                            g2["median_reviews"] = g2["median_reviews"].round(1)
+                            st.write("**Reviews summary**")
+                            st.dataframe(g2, use_container_width=True)
+ 
 except FileNotFoundError:
     st.error(f"File `{FILE_NAME}` not found in the repository. Upload it to the repo root and rerun.")
 except Exception as e:
