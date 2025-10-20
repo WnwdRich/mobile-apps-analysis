@@ -252,37 +252,93 @@ try:
             compare["Δ removed (dupes/misaligned exclusions)"] = compare["Missing (before)"] - compare["Missing Values"]
             st.dataframe(compare.sort_values("Missing Values", ascending=False), use_container_width=True)
 
-    # =========================
-    # Slide 3 – Insights & Findings
-    # =========================
-    with slide3:
-        st.subheader("Popular Categories by Installs")
-    
-        # 1) Locate needed columns
-        cat_col = find_col(df.columns, "category", "categories")
-        inst_col = find_col(df.columns, "installs", "downloads")
-    
-        if not cat_col or not inst_col:
-            st.error("Could not find 'Category' or 'Installs' columns. Please check the column names in the dataset.")
-        else:
-            # 2) Deduplicate identical rows (keep first)
-            dedup = df.drop_duplicates(keep="first").copy()
-    
-            # 3) Clean installs → numeric
-            dedup["_installs_num"] = dedup[inst_col].apply(to_int_like)
-    
-            # 4) Drop rows with missing fields needed for this insight
-            clean_insight_df = dedup.dropna(subset=[cat_col, "_installs_num"]).copy()
-    
-            # 5) Aggregate
-            agg = (
-                clean_insight_df
-                .groupby(cat_col, dropna=False, as_index=False)
-                .agg(total_installs=("_installs_num", "sum"),
-                     avg_installs_per_app=("_installs_num", "mean"),
-                     apps=("._dummy", "size"))
-            )
-
+        # =========================
+        # Slide 3 – Insights & Findings
+        # =========================
+        with slide3:
+            st.subheader("Popular Categories by Installs")
+        
+            # 1) Locate needed columns
+            cat_col = find_col(df.columns, "category", "categories")
+            inst_col = find_col(df.columns, "installs", "downloads")
+        
+            if not cat_col or not inst_col:
+                st.error("Could not find 'Category' or 'Installs' columns. Please check the column names in the dataset.")
+            else:
+                # 2) Deduplicate identical rows (keep first)
+                dedup = df.drop_duplicates(keep="first").copy()
+        
+                # 3) Clean installs → numeric
+                dedup["_installs_num"] = dedup[inst_col].apply(to_int_like)
+        
+                # 4) Drop rows with missing fields needed for this insight
+                clean_insight_df = dedup.dropna(subset=[cat_col, "_installs_num"]).copy()
+        
+                # OPTIONAL: also exclude the likely-misaligned rows flagged in Slide 2
+                # clean_insight_df = clean_insight_df[~clean_insight_df.index.isin(suspicious_idx)]
+        
+                # 5) Aggregate
+                clean_insight_df["._dummy"] = 1
+                agg = (
+                    clean_insight_df
+                    .groupby(cat_col, dropna=False, as_index=False)
+                    .agg(
+                        total_installs=("_installs_num", "sum"),
+                        avg_installs_per_app=("_installs_num", "mean"),
+                        apps=("._dummy", "size")
+                    )
+                )
+        
+                # Sort by total installs desc
+                agg_sorted = agg.sort_values("total_installs", ascending=False, ignore_index=True)
+        
+                # UI controls
+                col1, col2 = st.columns(2)
+                with col1:
+                    maxN = min(15, len(agg_sorted)) if len(agg_sorted) else 3
+                    defaultN = min(10, len(agg_sorted)) if len(agg_sorted) else 3
+                    top_n = st.slider("Show top N categories (by total installs)", 3, maxN, defaultN)
+                with col2:
+                    show_table = st.checkbox("Show full table", value=False)
+        
+                top = agg_sorted.head(top_n)
+        
+                # Bar chart (total installs)
+                st.caption("Total installs (sum) by category")
+                if not top.empty:
+                    chart_df = top.set_index(cat_col)[["total_installs"]]
+                    st.bar_chart(chart_df)
+                else:
+                    st.info("No data available after de-duplication and missing-value filtering.")
+        
+                # Quick highlights
+                if not top.empty:
+                    top_cat = top.iloc[0]
+                    st.markdown(
+                        f"- **Top category by total installs:** `{top_cat[cat_col]}`  \n"
+                        f"- **Total installs:** {int(top_cat['total_installs']):,}  \n"
+                        f"- **Apps in category:** {int(top_cat['apps']):,}  \n"
+                        f"- **Average installs/app (top category):** {int(top_cat['avg_installs_per_app']):,}"
+                    )
+        
+                # Optional table
+                if show_table and not agg_sorted.empty:
+                    nice = agg_sorted.copy()
+                    nice["total_installs"] = nice["total_installs"].round(0).astype("int64")
+                    nice["avg_installs_per_app"] = nice["avg_installs_per_app"].round(0).astype("int64")
+                    st.dataframe(nice, use_container_width=True)
+        
+                # Method note (for graders)
+                with st.expander("Method (data used for this insight)"):
+                    kept_rows = len(clean_insight_df)
+                    dropped_dupes = len(df) - len(dedup)
+                    dropped_missing = len(dedup) - len(clean_insight_df)
+                    st.write(
+                        f"- Dropped **exact duplicate** rows: {dropped_dupes}  \n"
+                        f"- Dropped rows with missing **Category** or **Installs** (after cleaning): {dropped_missing}  \n"
+                        f"- Rows used in this analysis: {kept_rows}"
+                    )
+                    
 except FileNotFoundError:
     st.error(f"File `{FILE_NAME}` not found in the repository. Upload it to the repo root and rerun.")
 except Exception as e:
