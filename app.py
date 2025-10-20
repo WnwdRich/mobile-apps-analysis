@@ -575,40 +575,35 @@ try:
                             )
                             .sort_values("total_installs", ascending=False, ignore_index=True)
                     )
-            
-                    # 5) Chart: total installs by content rating
-                    st.caption("Total installs by content rating (higher = more user downloads)")
-                    st.bar_chart(cr.set_index("_content")[["total_installs"]])
-            
-                    # 6) Highlights
+                    
+                    # ---- Show table FIRST (formatted) ----
+                    nice = cr.copy()
+                    for c in ["total_installs", "avg_installs_per_app", "median_installs"]:
+                        nice[c] = nice[c].round(0).astype("int64").map(lambda x: f"{x:,}")
+                    nice["apps"] = nice["apps"].astype(int)
+                    st.subheader("Installs by Content Rating — Results")
+                    st.dataframe(nice.rename(columns={"_content": "Content Rating"}), use_container_width=True)
+                    
+                    # ---- Top content rating by total installs ----
                     top_row = cr.iloc[0]
                     st.markdown(
-                        f"- **Top content rating by total installs:** `{top_row['_content']}`  \n"
-                        f"- **Total installs:** {int(top_row['total_installs']):,}  \n"
-                        f"- **Apps in this segment:** {int(top_row['apps']):,}  \n"
-                        f"- **Average installs/app:** {int(top_row['avg_installs_per_app']):,}"
+                        f"**Top content rating by total installs:** `{top_row['_content']}`  \n"
+                        f"• Total installs: **{int(top_row['total_installs']):,}**  \n"
+                        f"• Apps in this segment: **{int(top_row['apps']):,}**  \n"
+                        f"• Average installs/app: **{int(top_row['avg_installs_per_app']):,}**"
                     )
-            
-                    # 7) Optional table
-                    with st.expander("Show table"):
-                        nice = cr.copy()
-                        for c in ["total_installs", "avg_installs_per_app", "median_installs"]:
-                            nice[c] = nice[c].round(0).astype("int64").map(lambda x: f"{x:,}")
-                        st.dataframe(nice.rename(columns={"_content": "Content Rating"}), use_container_width=True)
-            
-                    # 8) Method note
-                    with st.expander("Method (Content Rating → Installs)"):
-                        st.write(
-                            "- Dropped exact duplicate rows.  \n"
-                            "- Parsed **Installs** to numeric (e.g., '1,000,000+' → 1000000).  \n"
-                            "- Dropped rows missing **Content Rating** or **Installs**.  \n"
-                            "- Optional: excluded **'Unrated'** and/or filtered by **Category**.  \n"
-                            "- Aggregated installs by content rating to show where demand is highest."
-                        )
+                    
+                    # ---- Why this analysis? (short rationale) ----
+                    st.info(
+                        "We focus on Content Rating because installs are the key value signal. "
+                        "Knowing which age groups (e.g., Everyone/Teen/Mature) drive more downloads helps decide the **target age segment** for a new app."
+                    )
+                    
+                    # (Optional) simple chart for the slide
+                    st.caption("Total installs by content rating")
+                    st.bar_chart(cr.set_index("_content")[["total_installs"]])
 
-            # --- Analysis 5:---
-
-
+                   
 except FileNotFoundError:
     st.error(f"File `{FILE_NAME}` not found in the repository. Upload it to the repo root and rerun.")
 except Exception as e:
